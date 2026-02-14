@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Dict, Optional, Tuple
 
 import jax.numpy as jnp
+import jax
 from jax import Array
 from pydantic import BaseModel, ConfigDict, Field
 import numpy as np
@@ -283,3 +284,81 @@ class TensorField:
             funding_rate=jnp.float32(snapshot.funding_rate),
             timestamp=jnp.float32(snapshot.timestamp_us / 1e6),
         )
+
+# ---------------------------------------------------------------------------
+# JAX-Native Implementation (Phase 6 Optimization)
+# ---------------------------------------------------------------------------
+
+@jax.jit
+def process_tensor_jax(
+    mid_price: float,
+    bid_vol: Array,
+    ask_vol: Array,
+    prev_bid_vol: Array, 
+    prev_ask_vol: Array,
+    prev_flow_ema: Array,
+    price_history: Array, # Rolling window
+    timestamp: float
+) -> Tuple[Array, Array, Array, Array]: # MarketTensor flat, new_flow_ema, new_price_hist, debug
+    """
+    JIT-compiled TensorField logic.
+    Calculates volatility, flow, pressure purely on GPU.
+    Returns flattened MarketTensor vector and updated state.
+    """
+    n_levels = bid_vol.shape[0]
+    
+    # 1. Volatility
+    # Shift history: [p1, p2, p3] -> [p2, p3, new_p]
+    new_price_hist = jnp.roll(price_history, -1)
+    new_price_hist = new_price_hist.at[-1].set(mid_price)
+    
+    # Log returns of buffer (ignoring zeros/padding)
+    log_prices = jnp.log(new_price_hist + 1e-30)
+    log_returns = jnp.diff(log_prices)
+    vol = jnp.std(log_returns) + 1e-10
+    
+    # 2. Densities
+    total_vol = jnp.sum(bid_vol) + jnp.sum(ask_vol) + 1e-30
+    bid_density = bid_vol / total_vol
+    ask_density = ask_vol / total_vol
+    
+    prev_total = jnp.sum(prev_bid_vol) + jnp.sum(prev_ask_vol) + 1e-30
+    prev_bid_density = prev_bid_vol / prev_total
+    prev_ask_density = prev_ask_vol / prev_total
+    
+    # 3. Flow
+    # Raw flow = -(rho_now - rho_prev)
+    start_density = jnp.concatenate([bid_density, ask_density])
+    end_density = jnp.concatenate([prev_bid_density, prev_ask_density])
+    
+    raw_flow = -(start_density - end_density)
+    
+    # EMA
+    decay = 0.95
+    new_flow_ema = decay * prev_flow_ema + (1.0 - decay) * raw_flow
+    
+    # 4. Pressure
+    gamma = 1.4
+    pressure = jnp.power(start_density + 1e-10, gamma)
+    
+    # 5. Imbalance
+    imbalance = (jnp.sum(bid_vol) - jnp.sum(ask_vol)) / total_vol
+    
+    # 6. Spread (Scalar approximation for now or pass in)
+    spread = 0.0001 # Placeholder, usually needs best_bid/ask passed in
+    
+    # Assemble Tensor (Flat)
+    # [mid, spread, vol, imb, funding, time] + [bid_rho] + [ask_rho] + [flow] + [pressure]
+    
+    scalars = jnp.array([mid_price, spread, vol, imbalance, 0.0, timestamp])
+    
+    flat_tensor = jnp.concatenate([
+        scalars, 
+        bid_density, 
+        ask_density,
+        new_flow_ema, 
+        pressure
+    ])
+    
+    return flat_tensor, new_flow_ema, new_price_hist, raw_flow
+

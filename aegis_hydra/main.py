@@ -188,13 +188,48 @@ async def run_live(config: dict) -> None:
         logger.info("Disconnected. Goodbye.")
 
 
+async def run_paper(config: dict, args: argparse.Namespace) -> None:
+    """
+    Paper Trading Mode.
+    Connects to exchange (read-only) and mocks execution.
+    """
+    from .simulation.paper import PaperTrader
+    from .agents.population import Population
+    from .governor.risk_guard import RiskGuard
+
+    # Configuration
+    sim_cfg = config.get("simulation", {})
+    
+    # Initialize Population (Grid Size from args)
+    print(f"Initializing Ising Grid ({args.grid_size}x{args.grid_size})...")
+    pop = Population.default(
+        coupling=args.coupling, 
+        threshold=args.threshold, 
+        grid_size=args.grid_size
+    )
+    
+    # Risk Guard
+    rg = RiskGuard(concentration_limit=1.0)
+    
+    # Initialize Paper Trader
+    trader = PaperTrader(
+        population=pop,
+        risk_guard=rg,
+        symbol="BTC/USD", # Coinbase uses BTC/USD usually backtester/fetch_data logic
+        initial_capital=sim_cfg.get("initial_capital", 10000.0),
+        exchange_id=args.exchange,
+        temperature=args.temp
+    )
+    
+    await trader.run()
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Aegis Hydra — Econophysics Trading Engine"
     )
     parser.add_argument(
         "--mode",
-        choices=["demo", "backtest", "live", "simulate"],
+        choices=["demo", "backtest", "live", "simulate", "paper"],
         default="demo",
         help="Execution mode",
     )
@@ -212,6 +247,7 @@ def main() -> None:
     parser.add_argument("--coupling", type=float, default=1.0, help="Ising Coupling J")
     parser.add_argument("--threshold", type=float, default=0.7, help="Magnetization Threshold")
     parser.add_argument("--grid-size", type=int, default=3162, help="Grid dim (size x size)")
+    parser.add_argument("--exchange", type=str, default="coinbase", help="Exchange ID (ccxt)")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -275,6 +311,9 @@ def main() -> None:
             sys.exit(1)
     elif args.mode == "simulate":
         run_demo(config)  # Simulate = demo with synthetic data
+    elif args.mode == "paper":
+        # Paper Trading Mode
+        asyncio.run(run_paper(config, args))
     else:
         parser.print_help()
 
