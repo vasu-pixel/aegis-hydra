@@ -8,3 +8,4 @@ ccxt>=4.0.0
 python-dotenv>=1.0.0
 matplotlib>=3.7.1
 scipy>=1.10.1
+pyyaml>=6.0
