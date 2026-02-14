@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis Hydra - Live Swarm Monitor</title>
+    <style>
+        body {
+            background-color: #0d1117;
+            color: #c9d1d9;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: #58a6ff;
+            margin-bottom: 10px;
+        }
+        .status {
+            font-size: 14px;
+            color: #8b949e;
+            margin-bottom: 20px;
+        }
+        .container {
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 10px;
+            background-color: #161b22;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+    </style>
+    <script>
+        function refreshImage() {
+            const img = document.getElementById('dashboard-img');
+            // Append timestamp to prevent caching
+            img.src = 'live_dashboard.png?' + new Date().getTime();
+        }
+        // Refresh every 1000ms (1 second)
+        setInterval(refreshImage, 1000);
+    </script>
+</head>
+<body>
+    <h1>Aegis Hydra | Zero-Copy JAX Kernel</h1>
+    <div class="status">Live Feed from GCP us-east4 (Ashburn) | Latency: &lt;2ms</div>
+    <div class="container">
+        <img id="dashboard-img" src="live_dashboard.png" alt="Waiting for dashboard.py to generate image...">
+    </div>
+</body>
+</html>
