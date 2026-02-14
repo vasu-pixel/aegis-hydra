@@ -1,0 +1,33 @@
+[package]
+name = "aegis_ingestion"
+version = "0.1.0"
+edition = "2021"
+description = "High-speed WebSocket ingestion module for Aegis Hydra"
+
+[lib]
+name = "aegis_ingestion"
+crate-type = ["cdylib"]  # Compiled as a Python extension via PyO3
+
+[dependencies]
+# PyO3: Rust ↔ Python bindings
+pyo3 = { version = "0.20", features = ["extension-module"] }
+
+# Tokio: Async runtime for WebSocket handling
+tokio = { version = "1", features = ["full"] }
+
+# Tungstenite: WebSocket client
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+
+# Serde: JSON serialization/deserialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Crossbeam: Lock-free concurrent data structures
+crossbeam = "0.8"
+
+# Tracing: Structured logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[build-dependencies]
+pyo3-build-config = "0.20"

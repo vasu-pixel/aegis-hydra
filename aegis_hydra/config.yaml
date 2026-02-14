@@ -1,0 +1,106 @@
+# ═══════════════════════════════════════════════════════════════
+# AEGIS HYDRA — Universe Parameters
+# ═══════════════════════════════════════════════════════════════
+
+# --- Physics Constants ---
+physics:
+  dt: 0.001                    # Simulation time step (seconds)
+  n_brownian: 400000           # Brownian swarm size
+  n_entropic: 300000           # Entropic swarm size
+  n_hamiltonian: 300000        # Hamiltonian swarm size
+
+  brownian:
+    gamma: 1.0                 # Mean-reversion rate
+    sigma_base: 0.1            # Base noise intensity
+
+  entropic:
+    tsallis_q: 1.5             # Tsallis non-extensivity index
+    entropy_threshold: 0.5     # Order/chaos boundary
+    n_levels_per_agent: 10     # Price levels each agent observes
+
+  hamiltonian:
+    mass: 1.0                  # Effective market inertia
+    perturbation_scale: 1.0e-5 # Lyapunov estimation perturbation
+    leapfrog_steps: 10         # Sub-steps per macro step
+
+  fluid:
+    gamma: 1.4                 # Adiabatic index (equation of state)
+    base_viscosity: 0.01       # Baseline market friction
+    n_levels: 100              # Spatial grid points
+
+# --- Swarm Blending Weights ---
+weights:
+  brownian: 0.4
+  entropic: 0.3
+  hamiltonian: 0.3
+
+# --- Governor (Control Theory) ---
+governor:
+  hjb:
+    gamma_risk: 1.0            # Risk aversion in HJB cost
+    transaction_cost: 0.001    # Per-unit cost
+    sigma: 0.1                 # Diffusion in stochastic HJB
+
+  allocator:
+    budget: 100.0              # Total capital ($)
+    n_slots: 100               # Number of order slots
+    max_single_pct: 0.10       # Max 10% in one slot
+    risk_aversion: 1.0
+    allow_short: false
+
+  risk_guard:
+    var_limit: 0.05            # 5% VaR limit
+    max_drawdown: 0.10         # 10% max drawdown
+    emergency_drawdown: 0.20   # 20% emergency flatten
+    concentration_limit: 0.25  # Herfindahl limit
+    cooldown_steps: 50         # Steps after RED before resume
+
+# --- Market Connection ---
+market:
+  exchange: "binance"
+  symbol: "BTC/USDT"
+  testnet: true
+  n_levels: 50                 # Order book depth
+
+  tensor_field:
+    vol_window: 100            # Snapshots for volatility estimation
+    flow_decay: 0.95           # EMA decay for flow velocity
+
+  # API credentials (use env vars in production!)
+  api_key: "${EXCHANGE_API_KEY}"
+  api_secret: "${EXCHANGE_API_SECRET}"
+
+# --- Infrastructure ---
+infrastructure:
+  redis:
+    host: "localhost"
+    port: 6379
+    db: 0
+
+  timescaledb:
+    host: "localhost"
+    port: 5432
+    dbname: "aegis_hydra"
+    user: "aegis"
+    password: "${TIMESCALE_PASSWORD}"
+
+  ray:
+    num_cpus: 8
+    num_gpus: 1                # Set to 0 for CPU-only mode
+
+# --- Logging ---
+logging:
+  level: "INFO"                # DEBUG, INFO, WARNING, ERROR
+  file: "logs/aegis_hydra.log"
+  json: false                  # true for production
+  rotation: "100 MB"
+  retention: "7 days"
+
+# --- Simulation / Backtest ---
+simulation:
+  seed: 42
+  initial_capital: 100.0
+  # Scale down agents for backtesting speed
+  backtest_brownian: 1000
+  backtest_entropic: 1000
+  backtest_hamiltonian: 1000
