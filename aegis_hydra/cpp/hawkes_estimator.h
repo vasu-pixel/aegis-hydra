@@ -18,21 +18,37 @@ private:
   std::deque<double> trade_counts; // float for EWMA smoothing
   std::deque<double> timestamps;
 
+  // Bucketing for Variance Calculation
+  double current_bucket_sum = 0.0;
+  double current_bucket_start = 0.0;
+  double bucket_size = 0.1; // 100ms buckets
+
   double window_duration = 10.0; // 10 seconds (HFT scale)
   double ewma_alpha = 0.2;       // Smoothing factor
 
 public:
-  // Add new trade count observation with EWMA smoothing
+  // Add new trade count observation with Time Bucketing
   void update(uint64_t raw_count, double timestamp) {
-    double smoothed_count = (double)raw_count;
-
-    if (!trade_counts.empty()) {
-      double prev = trade_counts.back();
-      smoothed_count = (ewma_alpha * raw_count) + ((1.0 - ewma_alpha) * prev);
+    if (current_bucket_start == 0.0) {
+      current_bucket_start = timestamp;
     }
 
-    trade_counts.push_back(smoothed_count);
-    timestamps.push_back(timestamp);
+    // Add to current bucket
+    current_bucket_sum += raw_count;
+
+    // If bucket is full (or time jumped), push to deque
+    if (timestamp - current_bucket_start >= bucket_size) {
+
+      // Push the accumulated bucket count (keep it raw/integer-like for
+      // variance) We can apply slight smoothing if needed, but let's try raw
+      // first to get Var > Mean
+      trade_counts.push_back(current_bucket_sum);
+      timestamps.push_back(current_bucket_start);
+
+      // Reset bucket
+      current_bucket_sum = 0.0;
+      current_bucket_start = timestamp;
+    }
 
     // Remove old observations outside window
     while (!timestamps.empty() &&
