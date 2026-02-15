@@ -69,12 +69,13 @@ int main() {
             std::cerr << "\r[DAEMON] Price: " << packet.mid_price
                       << " | MLOFI: " << metrics.mlofi
                       << " | n: " << metrics.criticality
+                      << " | Samples: " << metrics.hawkes_samples  // Show sample count
                       << " | σ: " << metrics.volatility
                       << " | Thresh: " << metrics.threshold
                       << " | Latency: " << latency.count() << "ms "
                       << std::flush;
 
-            // Output state for Python
+            // Output state for Python (including hawkes_samples for debugging)
             std::cout << "STATE " << total_ticks
                       << " " << packet.mid_price
                       << " " << metrics.mlofi
@@ -83,6 +84,7 @@ int main() {
                       << " " << metrics.criticality
                       << " " << metrics.volatility
                       << " " << metrics.threshold
+                      << " " << metrics.hawkes_samples  // Add sample count to output
                       << std::endl;
         }
 
