@@ -22,6 +22,7 @@ public:
 
   // Metrics
   std::atomic<long> steps{0};
+  std::atomic<float> last_step_ms{0.0f};
 
   void start(int height, int width, uint32_t seed) {
     if (running)
@@ -46,30 +47,24 @@ public:
 
   void run_loop() {
     while (running) {
+      auto start = std::chrono::high_resolution_clock::now();
+
       // Physics Step (1 MC Sweep)
       // Using atomic relaxed for speed, Python updates T/J occasionally
       float t_val = T.load(std::memory_order_relaxed);
       float j_val = J.load(std::memory_order_relaxed);
       float h_val = h.load(std::memory_order_relaxed);
 
-      // TODO: Calculate h_val based on Price Dynamics?
-      // Currently Python sets 'h', or we can implement logic here.
-      // For Phase 11 MVP: Python sets 'h'.
-
       model->step(t_val, j_val, h_val);
-
-      // Update Magnetization (Heavy calculation!)
-      // Doing this every step might be too slow for 10M agents.
-      // Maybe every 10 steps?
-      // User wants max speed. Let's do every step for now and measure.
 
       float m = model->magnetization();
       current_magnetization.store(m, std::memory_order_relaxed);
 
-      steps++;
+      auto end = std::chrono::high_resolution_clock::now();
+      std::chrono::duration<float, std::milli> diff = end - start;
+      last_step_ms.store(diff.count(), std::memory_order_relaxed);
 
-      // Aggressive Yield? No yield -> 100% Core Usage.
-      // std::this_thread::sleep_for(std::chrono::microseconds(1));
+      steps++;
     }
   }
 };
@@ -100,6 +95,10 @@ float Engine_get_magnetization() {
 }
 
 long Engine_get_steps() { return engine.steps.load(std::memory_order_relaxed); }
+
+float Engine_get_latency() {
+  return engine.last_step_ms.load(std::memory_order_relaxed);
+}
 
 // Phase 15: Run Dedicated Feed Loop (Blocks Thread)
 // Reads binary float stream from STDIN (piped)
