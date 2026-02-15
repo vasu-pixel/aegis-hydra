@@ -259,6 +259,7 @@ def main() -> None:
     parser.add_argument("--min_hold_seconds", type=float, default=60.0, help="Minimum Hold Time")
     parser.add_argument("--aggregation", type=float, default=5.0, help="Candle Aggregation Time (s)")
     parser.add_argument("--use-cpp", action="store_true", help="Use C++ Core for Physics")
+    parser.add_argument("--hsoft", action="store_true", help="Use Hard Soft-Realtime Engine")
     args = parser.parse_args()
 
     config = load_config(args.config)

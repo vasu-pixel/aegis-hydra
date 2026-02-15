@@ -91,6 +91,7 @@ class PaperTrader:
         min_hold_seconds: float = 60.0,
         aggregation_seconds: float = 5.0,
         use_cpp: bool = False,
+        use_hsoft: bool = False,
     ):
         self.population = population
         self.risk_guard = risk_guard
@@ -105,6 +106,7 @@ class PaperTrader:
         self.min_hold_seconds = min_hold_seconds
         self.aggregation_seconds = aggregation_seconds
         self.use_cpp = use_cpp
+        self.use_hsoft = use_hsoft
         
         self.position = 0.0 
         self.last_trade_time = 0.0 # For Cool-Down
@@ -125,7 +127,10 @@ class PaperTrader:
     async def run(self):
         print(f"=== PAPER TRADER INITIALIZED (Zero-Copy) ===")
         print(f"Exchange: COINBASE (WebSocket)")
-        print(f"Engine: {'C++ (OpenMP)' if self.use_cpp else 'JAX (GPU/TPU)'}")
+        engine_type = "JAX (GPU/TPU)"
+        if self.use_hsoft: engine_type = "C++ HSOFT (Background Thread)"
+        elif self.use_cpp: engine_type = "C++ (OpenMP)"
+        print(f"Engine: {engine_type}")
         print(f"Physics: T={self.temperature}, J={self.coupling}")
         print(f"Strategy: Viscosity Buy>{self.viscosity_buy}, Sell<{self.viscosity_sell}")
         print(f"Cool-Down: {self.min_hold_seconds}s")
@@ -144,14 +149,25 @@ class PaperTrader:
 
         try:
             # Initialize Physics Engine
-            if self.use_cpp:
+            rng_key = None
+            grid_state = None
+            cpp_engine = None
+            cpp_grid = None
+            
+            if self.use_hsoft:
+                from ..agents.cpp_grid import CppEngine
+                grid_size = self.population.ising.width
+                print(f"Starting C++ Engine ({grid_size}x{grid_size})")
+                cpp_engine = CppEngine()
+                cpp_engine.start(grid_size)
+                # Pass initial params
+                cpp_engine.update_params(self.temperature, self.coupling, 0.0)
+                
+            elif self.use_cpp:
                 from ..agents.cpp_grid import CppIsingGrid
-                grid_size = self.population.ising.width # Infer from JAX config
+                grid_size = self.population.ising.width
                 print(f"Initializing C++ Grid ({grid_size}x{grid_size})")
                 cpp_grid = CppIsingGrid(grid_size)
-                # JAX keys not needed for C++
-                rng_key = None
-                grid_state = None 
             else:
                 rng_key = jax.random.PRNGKey(int(time.time()))
                 grid_state = self.population.initialize(rng_key, temperature=self.temperature)
@@ -164,7 +180,7 @@ class PaperTrader:
             # Candle Aggregation Variables
             candle_start_time = time.time()
             ticks_buffer = []
-            
+
             # Wait for WS Data
             print("Waiting for initial L2 snapshot...")
             while not ws_client.ready:
@@ -215,24 +231,24 @@ class PaperTrader:
                 # 3. Monolithic Update (Engine Latency)
                 eng_start = time.time()
                 
-                if self.use_cpp:
+                if self.use_hsoft:
+                    # HSOFT LOGIC
+                    # 1. Feed Market Data
+                    cpp_engine.update_market(mid_price)
+                    
+                    # 2. Poll Result (Instant)
+                    magnetization = cpp_engine.get_magnetization()
+                    
+                    # 3. Param Update (Optional, maybe periodically?)
+                    # cpp_engine.update_params(self.temperature, self.coupling, h_ext)
+                    
+                    # Dummy Aggregation
+                    agg = {"magnetization": magnetization}
+                    
+                elif self.use_cpp:
                     # C++ CORE LOGIC
-                    # Translate Market Data to Field 'h'
-                    # Simplified Logic: Deviation from EMA = External Field
-                    
-                    # Update EMA (Python-side for now, could move to C++)
-                    # We need a robust 'h' calculation. 
-                    # For now: (Price - EMA) / EMA * 100
-                    # But we need prev_flow_ema history.
-                    
-                    # For Phase 10 MVP: Pure Random + Coupling (No External Field 'h' yet)
-                    # We will add 'h' calculation in next iteration.
-                    # Just prove speed first.
                     h_ext = 0.0 
-                    
                     magnetization = cpp_grid.step(self.temperature, self.coupling, h_ext)
-                    
-                    # Dummy Aggregation for compatibility
                     agg = {"magnetization": magnetization}
                     
                 else:
