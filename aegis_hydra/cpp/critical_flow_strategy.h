@@ -36,12 +36,14 @@ private:
 
   static constexpr double MIN_PROFIT_PCT = 0.0005; // 0.05% net profit target
   static constexpr double COOLDOWN_SEC = 2.0;      // 2s cooldown after exit
+  static constexpr double GRACE_PERIOD_SEC = 1.0;  // 1s immunity after entry
 
   float prev_mid_price = 0.0f;
   uint64_t trade_count_per_tick = 0;
 
   // State Tracking
   double last_exit_time = 0.0;
+  double entry_time = 0.0;
   bool in_position = false;
   float entry_price = 0.0f;
   Signal current_side = Signal::HOLD;
@@ -161,10 +163,15 @@ public:
       bool signal_reversed = (current_side == Signal::BUY && mlofi < -0.1f) ||
                              (current_side == Signal::SELL && mlofi > 0.1f);
 
-      // Hard Stop Loss (safety net)
+      // Hard Stop Loss (safety net) - ALWAYS ACTIVE
       if (pnl_pct < -0.005f) { // -0.5% stop
         close_position(current_time);
         return Signal::HOLD;
+      }
+
+      // Grace Period: Ignore noise/surrender for first 1s
+      if (current_time - entry_time < GRACE_PERIOD_SEC) {
+        return current_side;
       }
 
       // Take Profit (if target met)
@@ -191,20 +198,21 @@ public:
     }
 
     if (mlofi > threshold) {
-      open_position(Signal::BUY, mid_price);
+      open_position(Signal::BUY, mid_price, current_time);
       return Signal::BUY;
     } else if (mlofi < -threshold) {
-      open_position(Signal::SELL, mid_price);
+      open_position(Signal::SELL, mid_price, current_time);
       return Signal::SELL;
     }
 
     return Signal::HOLD;
   }
 
-  void open_position(Signal side, float price) {
+  void open_position(Signal side, float price, double time) {
     in_position = true;
     current_side = side;
     entry_price = price;
+    entry_time = time;
   }
 
   void close_position(double time) {
