@@ -203,9 +203,20 @@ class PaperTrader:
                 # This WILL block, revealing true compute time.
                 magnetization = float(agg["magnetization"])
                 
-                target_pos = 0.0
-                if magnetization > 0.7: target_pos = 1.0
-                elif magnetization < -0.7: target_pos = -1.0
+                # Hysteresis (Viscosity) to prevent Churn
+                # Entry: Strong Signal (>0.8)
+                # Exit:  Weak Signal (<0.4)
+                # This deadband prevents rapid flipping.
+                
+                target_pos = self.position # Default: Hold
+                
+                if abs(self.position) < 0.1: # Neutral
+                    if magnetization > 0.8: target_pos = 1.0
+                    elif magnetization < -0.8: target_pos = -1.0
+                elif self.position > 0.5: # Long
+                    if magnetization < 0.4: target_pos = 0.0
+                elif self.position < -0.5: # Short
+                    if magnetization > -0.4: target_pos = 0.0
                 
                 if prev_price:
                     pct = (mid_price - prev_price) / prev_price
