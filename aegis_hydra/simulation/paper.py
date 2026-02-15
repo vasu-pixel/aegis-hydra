@@ -251,10 +251,14 @@ class PaperTrader:
                         "step": step,
                         "price": mid_price,
                         "capital": self.capital,
-                        "magnetization": magnetization,
                         "position": self.position,
                         "latency": true_latency
                     })
+                    
+                    # Log full state for ML Training (Append Mode)
+                    with open("paper_log.csv", "a") as f:
+                        f.write(f"{datetime.now().isoformat()},{step},{mid_price},{self.capital},{magnetization},{self.position},{true_latency}\n")
+
                     if step % 50 == 0:
                         import json
                         with open("paper_state.json", "w") as f:
