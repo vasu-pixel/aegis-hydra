@@ -1,8 +1,8 @@
 #ifndef HAWKES_ESTIMATOR_H
 #define HAWKES_ESTIMATOR_H
 
-#include <deque>
 #include <cmath>
+#include <deque>
 #include <numeric>
 
 // Real-time Hawkes Process Branching Ratio Estimator
@@ -10,76 +10,91 @@
 // Uses variance/mean method for computational efficiency
 class HawkesEstimator {
 private:
-    static constexpr int WINDOW_SIZE = 600;  // 1 minute at ~100ms updates
-    static constexpr float MIN_CRITICALITY = 0.0f;
-    static constexpr float MAX_CRITICALITY = 0.95f;
+  static constexpr int WINDOW_SIZE = 100; // 10 seconds at ~100ms updates
+  static constexpr float MIN_CRITICALITY = 0.0f;
+  static constexpr float MAX_CRITICALITY = 0.95f;
 
-    std::deque<uint64_t> trade_counts;  // Number of trades per tick
-    std::deque<double> timestamps;      // Timestamps for windowing
+  std::deque<double> trade_counts; // float for EWMA smoothing
+  std::deque<double> timestamps;
 
-    double window_duration = 60.0;  // 60 seconds
+  double window_duration = 10.0; // 10 seconds (HFT scale)
+  double ewma_alpha = 0.2;       // Smoothing factor
 
 public:
-    // Add new trade count observation
-    void update(uint64_t count, double timestamp) {
-        trade_counts.push_back(count);
-        timestamps.push_back(timestamp);
+  // Add new trade count observation with EWMA smoothing
+  void update(uint64_t raw_count, double timestamp) {
+    double smoothed_count = (double)raw_count;
 
-        // Remove old observations outside window
-        while (!timestamps.empty() &&
-               (timestamp - timestamps.front()) > window_duration) {
-            trade_counts.pop_front();
-            timestamps.pop_front();
-        }
+    if (!trade_counts.empty()) {
+      double prev = trade_counts.back();
+      smoothed_count = (ewma_alpha * raw_count) + ((1.0 - ewma_alpha) * prev);
     }
 
-    // Calculate branching ratio n = 1 - sqrt(E[N] / Var[N])
-    // Returns: 0.0 (noise) to 0.95 (critical)
-    float calculate_criticality() const {
-        if (trade_counts.size() < 30) {
-            return 0.0f;  // Not enough data
-        }
+    trade_counts.push_back(smoothed_count);
+    timestamps.push_back(timestamp);
 
-        // Calculate mean
-        double sum = std::accumulate(trade_counts.begin(),
-                                     trade_counts.end(), 0.0);
-        double mean = sum / trade_counts.size();
+    // Remove old observations outside window
+    while (!timestamps.empty() &&
+           (timestamp - timestamps.front()) > window_duration) {
+      trade_counts.pop_front();
+      timestamps.pop_front();
+    }
+  }
 
-        if (mean < 0.01) {
-            return 0.0f;  // No activity
-        }
-
-        // Calculate variance
-        double sq_sum = 0.0;
-        for (uint64_t count : trade_counts) {
-            double diff = count - mean;
-            sq_sum += diff * diff;
-        }
-        double variance = sq_sum / trade_counts.size();
-
-        if (variance < 0.01) {
-            return 0.0f;  // No variance = noise
-        }
-
-        // Branching ratio: n = 1 - sqrt(mean / variance)
-        float n = 1.0f - std::sqrt(mean / variance);
-
-        // Clamp to valid range
-        if (n < MIN_CRITICALITY) return MIN_CRITICALITY;
-        if (n > MAX_CRITICALITY) return MAX_CRITICALITY;
-
-        return n;
+  // Moment-Based Estimator: n = (Var - Mean) / Var
+  // Measures clustering (excess variance) relative to random Poisson (Var=Mean)
+  float calculate_criticality() const {
+    if (trade_counts.size() < 10) {
+      return 0.0f; // Not enough data
     }
 
-    // Check if market is in critical regime (n > threshold)
-    inline bool is_critical(float threshold = 0.7f) const {
-        return calculate_criticality() > threshold;
+    // Calculate Mean
+    double sum = std::accumulate(trade_counts.begin(), trade_counts.end(), 0.0);
+    double mean = sum / trade_counts.size();
+
+    if (mean < 0.001) {
+      return 0.0f; // No activity
     }
 
-    // Get current sample count
-    inline size_t sample_count() const {
-        return trade_counts.size();
+    // Calculate Variance
+    double sq_sum = 0.0;
+    for (double count : trade_counts) {
+      double diff = count - mean;
+      sq_sum += diff * diff;
     }
+    double variance = sq_sum / trade_counts.size();
+
+    if (variance < 0.0001) {
+      return 0.0f; // No variance
+    }
+
+    // Moment-Based Estimator
+    // If Var > Mean, it's clustered (n > 0).
+    // If Var <= Mean, it's random or regular (n = 0).
+    float n = 0.0f;
+    if (variance > mean) {
+      n = (float)((variance - mean) / variance);
+    }
+
+    // HFT adjustment: Amplify weak signals slightly
+    n = std::pow(n, 0.8f);
+
+    // Clamp to valid range
+    if (n < MIN_CRITICALITY)
+      return MIN_CRITICALITY;
+    if (n > MAX_CRITICALITY)
+      return MAX_CRITICALITY;
+
+    return n;
+  }
+
+  // Check if market is in critical regime
+  inline bool is_critical(float threshold = 0.5f) const {
+    return calculate_criticality() > threshold;
+  }
+
+  // Get current sample count
+  inline size_t sample_count() const { return trade_counts.size(); }
 };
 
 #endif // HAWKES_ESTIMATOR_H

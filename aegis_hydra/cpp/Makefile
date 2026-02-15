@@ -1,36 +1,39 @@
+# Makefile for Critical Flow HFT Strategy
+# Replaces Ising model with OFI + Hawkes approach
 
-CC = g++
-UNAME_S := $(shell uname -s)
+CXX = g++
+CXXFLAGS = -O3 -march=native -std=c++17 -Wall -Wextra
+LDFLAGS = -lm
 
-ifeq ($(UNAME_S),Darwin)
-	# macOS specific flags (Homebrew libomp)
-	# Check if brew libomp exists, else fallback
-	OMP_FLAGS = -Xpreprocessor -fopenmp -lomp
-	# Default paths for Homebrew
-	CFLAGS = -O3 -march=native $(OMP_FLAGS) -fPIC -shared -std=c++17 -I/usr/local/opt/libomp/include -L/usr/local/opt/libomp/lib -I/opt/homebrew/opt/libomp/include -L/opt/homebrew/opt/libomp/lib
-	LFLAGS = -O3 -march=native $(OMP_FLAGS) -std=c++17 -I/usr/local/opt/libomp/include -L/usr/local/opt/libomp/lib -I/opt/homebrew/opt/libomp/include -L/opt/homebrew/opt/libomp/lib
-else
-	CFLAGS = -O3 -march=native -fopenmp -fPIC -shared -std=c++17
-	LFLAGS = -O3 -march=native -fopenmp -std=c++17
-endif
+# Targets
+DAEMON = critical_flow_daemon
 
-TARGET = libising.so
-TARGET_ENGINE = libising_engine.so
-TARGET_DAEMON = aegis_daemon
-SRC = ising_kernel.cpp
-SRC_ENGINE = ising_engine.cpp
-SRC_DAEMON = main.cpp
+# Source files
+SRCS = critical_flow_daemon.cpp order_book.cpp
+OBJS = $(SRCS:.cpp=.o)
+HEADERS = critical_flow_strategy.h hawkes_estimator.h mlofi_calculator.h order_book.h
 
-all: $(TARGET) $(TARGET_ENGINE) $(TARGET_DAEMON)
+# Default target
+all: $(DAEMON)
 
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $@ $(SRC)
+# Build daemon
+$(DAEMON): $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo "✅ Critical Flow Daemon built successfully"
 
-$(TARGET_ENGINE): $(SRC_ENGINE)
-	$(CC) $(CFLAGS) -o $@ $(SRC_ENGINE)
+# Compile object files
+%.o: %.cpp $(HEADERS)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(TARGET_DAEMON): $(SRC_DAEMON)
-	$(CC) $(LFLAGS) -o $@ $(SRC_DAEMON)
-
+# Clean
 clean:
-	rm -f $(TARGET) $(TARGET_ENGINE) $(TARGET_DAEMON)
+	rm -f $(DAEMON) $(OBJS)
+	@echo "🧹 Cleaned build artifacts"
+
+# Archive old Ising code
+archive:
+	mkdir -p ../archive/ising_model
+	mv main.cpp ising_kernel.cpp ising_engine.cpp risk_guard.h ../archive/ising_model/ 2>/dev/null || true
+	@echo "📦 Archived old Ising model code"
+
+.PHONY: all clean archive
