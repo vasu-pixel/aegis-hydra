@@ -50,7 +50,7 @@ async def run_pipe(product_id="BTC-USD"):
     async def sync_dashboard():
         """Periodic background task to update paper_state.json without blocking trading."""
         while True:
-            await asyncio.sleep(0.5) # Update every 500ms
+            await asyncio.sleep(0.2) # Update every 200ms
             if state_history:
                 try:
                     # Write only the last 1000 points to keep it fast

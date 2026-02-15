@@ -64,7 +64,7 @@ def run_dashboard():
             plt.savefig("live_dashboard.png")
             # plt.pause(0.1) # Don't need to show window if headless, saving png is enough for VS Code
             
-            time.sleep(2)
+            time.sleep(1)
             
         except KeyboardInterrupt:
             break
