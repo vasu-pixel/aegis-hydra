@@ -126,11 +126,18 @@ async def run_pipe(product_id="BTC-USD"):
     # 6. Optimized WS Loop (Threaded Parsing + Zero-Yield)
     import websockets
     async with websockets.connect(ws.WS_URL, max_size=None) as socket:
-        # Subscribe
+        # Subscribe to both high-frequency book changes and trade tickers
+        subscribe_msg = {
+            "type": "subscribe",
+            "product_ids": [product_id],
+            "channel": "level2"
+        }
+        await socket.send(json.dumps(subscribe_msg))
+        
         await socket.send(json.dumps({
             "type": "subscribe", "product_ids": [product_id], "channel": "ticker"
         }))
-        print("Subscribed. Entering Zero-Jitter loop...")
+        print("Subscribed to level2 & ticker. Restoring high-frequency pulse...")
 
         try:
             while True:
@@ -144,34 +151,41 @@ async def run_pipe(product_id="BTC-USD"):
                     # OPTIMIZATION: Threaded JSON Parsing
                     data = await loop.run_in_executor(parse_executor, json.loads, message)
                     
-                    if data.get("channel") == "ticker":
-                        events = data.get("events", [])
-                        for event in events:
-                            tickers = event.get("tickers", [])
-                            if tickers:
-                                price = float(tickers[0]["price"])
-                                server_time_str = tickers[0].get("time", "")
+                    channel = data.get("channel")
+                    if channel == "l2_data":
+                        ws._handle_l2(data)
+                    elif channel == "ticker":
+                        ws._handle_ticker(data)
+
+                    # Get Price (Fast path)
+                    price = ws.get_mid_price()
+                    
+                    if price > 0:
+                        # Network Latency calculation
+                        net_latency = 0.0
+                        if channel == "ticker":
+                            events = data.get("events", [])
+                            if events and events[0].get("tickers"):
+                                server_time_str = events[0]["tickers"][0].get("time")
                                 if server_time_str:
                                     server_ts = datetime.fromisoformat(server_time_str.replace('Z', '')).timestamp()
                                     net_latency = (time.time() - server_ts) * 1000
-                                else:
-                                    net_latency = 0.0
 
-                                # Update Tracker PnL
-                                if tracker.prev_price > 0:
-                                    pct_change = (price - tracker.prev_price) / tracker.prev_price
-                                    tracker.capital += tracker.position * tracker.capital * pct_change
-                                tracker.prev_price = price
+                        # Update Tracker PnL
+                        if tracker.prev_price > 0:
+                            pct_change = (price - tracker.prev_price) / tracker.prev_price
+                            tracker.capital += tracker.position * tracker.capital * pct_change
+                        tracker.prev_price = price
 
-                                # Write Binary Packet (Price + Latency)
-                                try:
-                                    process.stdin.write(struct.pack('ff', price, net_latency))
-                                    process.stdin.flush()
-                                except BrokenPipeError:
-                                    break
-                                    
-                                feed_latency = (time.time() - start_time) * 1000
-                                data_buffer.append(f"{datetime.now().isoformat()},{price},{feed_latency:.3f}\n")
+                        # Write Binary Packet (Price + Latency)
+                        try:
+                            process.stdin.write(struct.pack('ff', price, net_latency))
+                            process.stdin.flush()
+                        except BrokenPipeError:
+                            break
+                            
+                        feed_latency = (time.time() - start_time) * 1000
+                        data_buffer.append(f"{datetime.now().isoformat()},{price},{feed_latency:.3f}\n")
 
                 except asyncio.TimeoutError:
                     continue

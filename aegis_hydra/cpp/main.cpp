@@ -79,8 +79,8 @@ int main(int argc, char *argv[]) {
     double sell_thresh = -0.60 - (0.5 * vol);
     double exit_thresh = 0.40;
 
-    // Heartbeat every 100 prices
-    if (total_steps % 100 == 0) {
+    // Heartbeat every 10 prices (High Frequency)
+    if (total_steps % 10 == 0) {
       std::cerr << "\r[DAEMON] Price: " << price_in << " | M: " << mag
                 << " | Vol: " << vol << " | Thresh: " << buy_thresh
                 << " | Phys: " << phys_latency << "ms " << std::flush;
