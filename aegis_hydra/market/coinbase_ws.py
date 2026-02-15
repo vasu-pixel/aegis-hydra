@@ -49,7 +49,7 @@ class CoinbaseWebSocket:
     async def connect(self):
         while True:
             try:
-                async with websockets.connect(self.WS_URL) as ws:
+                async with websockets.connect(self.WS_URL, max_size=None) as ws:
                     self.ws = ws
                     logger.info(f"Connected to Coinbase WS ({self.product_id})")
                     
