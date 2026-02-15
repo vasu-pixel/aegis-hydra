@@ -82,7 +82,7 @@ async def run_pipe(product_id="BTC-USD"):
     async def background_maintenance():
         nonlocal data_buffer, signal_buffer
         while True:
-            await asyncio.sleep(0.5) 
+            await asyncio.sleep(0.5)
             if state_history:
                 loop.run_in_executor(io_executor, save_state_sync, state_history[-500:])
             if data_buffer:
@@ -93,7 +93,8 @@ async def run_pipe(product_id="BTC-USD"):
                 sigs = signal_buffer[:]
                 signal_buffer = []
                 loop.run_in_executor(io_executor, log_csv_sync, "hft_signals.csv", sigs)
-            gc.collect(0)
+            # REMOVED: gc.collect(0) - causes 3-8ms spikes, defeats gc.disable()
+            # gc.collect(0)
 
     # 4b. Non-Blocking Pipe Writer
     async def pipe_writer():
@@ -118,29 +119,38 @@ async def run_pipe(product_id="BTC-USD"):
         nonlocal data_buffer, signal_buffer
         while True:
             message, recv_time = await msg_queue.get()
-            
-            # FAST PATH: String processing (Zero JSON Allocation)
-            is_l2 = '"channel":"l2_data"' in message
-            is_ticker = '"channel":"ticker"' in message
+
+            # FAST PATH: Byte string processing (Zero-copy, zero allocation)
+            is_l2 = b'"channel":"l2_data"' in message
+            is_ticker = b'"channel":"ticker"' in message
             
             price = 0.0
             channel = "unknown"
-            
+            net_latency = 0.0
+
             if is_ticker:
-                # Optimized extraction for trade price
-                price_match = price_re.search(message)
+                # Optimized extraction for trade price (decode once)
+                msg_str = message.decode('utf-8', errors='ignore')
+                price_match = price_re.search(msg_str)
                 if price_match:
                     price = float(price_match.group(1))
                     ws.latest_ticker_price = price
                     ws.ready = True
                     channel = "ticker"
-                else:
-                    data = await loop.run_in_executor(parse_executor, json.loads, message)
-                    ws._handle_ticker(data)
-                    price = ws.get_mid_price()
+
+                    # Extract timestamp for network latency (fast path)
+                    time_idx = msg_str.find('"time":"')
+                    if time_idx != -1:
+                        ts_str = msg_str[time_idx+8:time_idx+34]
+                        try:
+                            server_ts = datetime.fromisoformat(ts_str.replace('Z', '')).timestamp()
+                            net_latency = (time.time() - server_ts) * 1000
+                        except:
+                            pass
+                # Skip fallback to JSON parsing - if regex fails, just skip this message
             elif is_l2:
                 # Must update book to get accurate mid-price
-                # But we use the now-optimized heap-based handle_l2
+                # Decode and parse in thread pool
                 data = await loop.run_in_executor(parse_executor, json.loads, message)
                 ws._handle_l2(data)
                 price = ws.get_mid_price()
@@ -154,17 +164,6 @@ async def run_pipe(product_id="BTC-USD"):
                 price = ws.get_mid_price()
 
             if price > 0:
-                net_latency = 0.0
-                # Latency calc only on tickers (has server 'time' field)
-                if is_ticker:
-                    time_idx = message.find('"time":"')
-                    if time_idx != -1:
-                        ts_str = message[time_idx+8:time_idx+34] # Close enough to ISO
-                        try:
-                            server_ts = datetime.fromisoformat(ts_str.replace('Z', '')).timestamp()
-                            net_latency = (time.time() - server_ts) * 1000
-                        except: pass
-
                 if tracker.prev_price > 0:
                     pct = (price - tracker.prev_price) / tracker.prev_price
                     tracker.capital += tracker.position * tracker.capital * pct

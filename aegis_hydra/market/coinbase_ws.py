@@ -16,12 +16,13 @@ class OrderBook:
     bid_heap: List[float] = field(default_factory=list) # max heap (invert prices)
     ask_heap: List[float] = field(default_factory=list) # min heap
     timestamp: float = 0.0
-    
+    update_count: int = 0  # Track updates for periodic cleanup
+
     def update(self, side: str, price: float, size: float):
         import heapq
         target_dict = self.bids if side == 'bid' else self.asks
         target_heap = self.bid_heap if side == 'bid' else self.ask_heap
-        
+
         if size == 0:
             target_dict.pop(price, None)
             # Lazy removal: we don't remove from heap here.
@@ -31,6 +32,19 @@ class OrderBook:
                 heapq.heappush(self.bid_heap, -price)
             else:
                 heapq.heappush(self.ask_heap, price)
+
+        # Periodic heap cleanup to prevent accumulation of stale entries
+        self.update_count += 1
+        if self.update_count % 1000 == 0:  # Every 1000 updates (~10-20 seconds)
+            self._rebuild_heaps()
+
+    def _rebuild_heaps(self):
+        """Rebuild heaps from dictionaries to purge stale entries."""
+        import heapq
+        self.bid_heap = [-p for p in self.bids.keys()]
+        self.ask_heap = [p for p in self.asks.keys()]
+        heapq.heapify(self.bid_heap)
+        heapq.heapify(self.ask_heap)
 
     @property
     def best_bid(self) -> float:

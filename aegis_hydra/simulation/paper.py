@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 import sys
 import gc
+import concurrent.futures
 
 # Try CCXT
 try:
@@ -24,6 +25,26 @@ from ..agents.population import Population
 from ..governor.hjb_solver import HJBSolver
 from ..governor.risk_guard import RiskGuard
 from ..market.tensor_field import process_tensor_jax
+
+# I/O Executor for non-blocking file writes
+io_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="io_worker")
+
+def write_csv_sync(filename, lines):
+    """Synchronous CSV write helper for executor."""
+    try:
+        with open(filename, "a") as f:
+            f.writelines(lines)
+    except Exception:
+        pass
+
+def save_json_sync(filename, data):
+    """Synchronous JSON write helper for executor."""
+    try:
+        import json
+        with open(filename, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # JIT Compiled Monolithic Kernel
@@ -187,12 +208,14 @@ class PaperTrader:
                 await asyncio.sleep(0.5)
             print("Initial Flash Received. Starting Engine.")
 
+            loop = asyncio.get_running_loop()
+
             while True:
-                loop_start = time.time()
-                
+                loop_start = time.perf_counter()  # Use perf_counter for better precision
+
                 # 1. Non-Blocking Read from Memory (Zero Latency)
                 mid_price, bids, asks = ws_client.get_data()
-                
+
                 if mid_price == 0:
                     await asyncio.sleep(0.1)
                     continue
@@ -299,69 +322,89 @@ class PaperTrader:
                         
                         side = "BUY" if trade_size > 0 else "SELL"
                         print(f"\n[TRADE] {side} | Price: {mid_price:.2f} | Size: {abs(trade_size):.2f} | Cap: ${old_cap:.2f} -> ${self.capital:.2f}")
-                        
-                        with open("paper_trades.csv", "a") as f:
-                            f.write(f"{datetime.now()},{mid_price},{side},{abs(trade_size)},{self.capital}\n")
+
+                        # Non-blocking trade log write
+                        trade_line = f"{datetime.now()},{mid_price},{side},{abs(trade_size)},{self.capital}\n"
+                        loop.run_in_executor(io_executor, lambda: open("paper_trades.csv", "a").write(trade_line))
                     else:
                         pass # Cooling Down
 
                 prev_price = mid_price
                 
                 # 5. Display & Logging (Buffered)
-                net_latency = (ts_sec - loop_start) * 1000
-                true_latency = (time.time() - eng_start) * 1000
-                
-                # Only update display every 10 steps (reduces I/O lag)
-                if step % 10 == 0:
+                eng_latency = (time.perf_counter() - eng_start) * 1000
+                loop_total = (time.perf_counter() - loop_start) * 1000
+
+                # Update display every 20 steps (good balance: responsive but not spammy)
+                if step % 20 == 0:
+                    pnl = self.capital - 100.0  # PnL from $100 starting capital
+                    pnl_pct = (pnl / 100.0) * 100
                     status = (
                         f"Step {step:05d} | "
-                        f"BTC: {mid_price:,.2f} | "
+                        f"BTC: {mid_price:.2f} | "
                         f"M: {magnetization:+.3f} | "
                         f"Pos: {self.position:+.1f} | "
-                        f"Net: {net_latency:.0f}ms | "
-                        f"Wait: {(ts_sec - candle_start_time):.1f}s | "
-                        f"True: {true_latency:.1f}ms"
+                        f"Cap: ${self.capital:.2f} ({pnl_pct:+.2f}%) | "
+                        f"Lat: {eng_latency:.1f}ms"
                     )
                     sys.stdout.write(status + "\r")
                     sys.stdout.flush()
+
+                # Spike detection instrumentation (logs to console AND continues running)
+                if loop_total > 5.0:
+                    breakdown = {
+                        "step": step,
+                        "total_ms": f"{loop_total:.1f}",
+                        "engine_ms": f"{eng_latency:.1f}",
+                        "overhead_ms": f"{loop_total - eng_latency:.1f}",
+                        "operations": []
+                    }
+                    if step % 503 == 0: breakdown["operations"].append("json_dump")
+                    if hasattr(self, 'csv_buffer') and len(self.csv_buffer) >= 1000:
+                        breakdown["operations"].append("csv_flush")
+
+                    print(f"\n⚠️  SPIKE DETECTED: {breakdown}")
                 
                 # Capture State Every 2 Steps (High resolution)
-                if step % 2 == 0: 
+                if step % 2 == 0:
+                    # Cache timestamp (single call instead of two)
+                    timestamp = datetime.now().isoformat()
+
                     # Add to RAM history (for JSON snapshot)
                     self.history.append({
-                        "time": datetime.now().isoformat(),
+                        "time": timestamp,
                         "step": step,
                         "price": mid_price,
                         "capital": self.capital,
                         "magnetization": magnetization,
                         "position": self.position,
-                        "latency": true_latency
+                        "latency": eng_latency
                     })
-                    
+
                     # Buffer CSV Line (RAM Only)
                     if not hasattr(self, 'csv_buffer'): self.csv_buffer = []
-                    self.csv_buffer.append(f"{datetime.now().isoformat()},{step},{mid_price},{self.capital},{magnetization},{self.position},{true_latency}\n")
-                    
-                    # Flush Buffer to Disk (Every 100 lines)
-                    if len(self.csv_buffer) >= 100:
-                        with open("paper_log.csv", "a") as f:
-                            f.writelines(self.csv_buffer)
-                        self.csv_buffer = [] # Clear buffer
+                    self.csv_buffer.append(f"{timestamp},{step},{mid_price},{self.capital},{magnetization},{self.position},{eng_latency}\n")
 
-                    import json
-                    # Write JSON State every 500 steps (heavy op, snapshot only)
-                    if step % 500 == 0:
-                        with open("paper_state.json", "w") as f:
-                            json.dump(self.history[-1000:], f)
+                    # Flush Buffer to Disk (Every 1000 lines - non-blocking)
+                    if len(self.csv_buffer) >= 1000:
+                        lines_to_write = self.csv_buffer[:]  # Shallow copy
+                        self.csv_buffer = []  # Clear buffer
+                        loop.run_in_executor(io_executor, write_csv_sync, "paper_log.csv", lines_to_write)
+
+                    # Write JSON State every 503 steps (prime number, non-blocking)
+                    if step % 503 == 0:
+                        snapshot = self.history[-1000:].copy()  # Shallow copy
+                        loop.run_in_executor(io_executor, save_json_sync, "paper_state.json", snapshot)
                 
                 step += 1
                 candle_start_time = time.time() # Reset candle timer
-                
+
                 # Event-Driven: Ultra-fast yield
                 await asyncio.sleep(0) # Yield to event loop
-                
-                if step % 1000 == 0:
-                    gc.collect()
+
+                # REMOVED: gc.collect() - defeats gc.disable() purpose and causes 5-12ms spikes
+                # if step % 1000 == 0:
+                #     gc.collect()
 
         except KeyboardInterrupt:
             print("\n\n=== PAUSED ===")
