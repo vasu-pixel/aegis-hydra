@@ -23,9 +23,28 @@ class OrderBook:
             target[price] = size
 
     def get_snapshot(self, depth: int = 50) -> Tuple[List[float], List[float]]:
-        # Sort bids descending, asks ascending
-        sorted_bids = sorted(self.bids.items(), key=lambda x: -x[0])[:depth]
-        sorted_asks = sorted(self.asks.items(), key=lambda x: x[0])[:depth]
+        import heapq
+        
+        # Optimize: Avoid full sort (O(N log N)) using heapq (O(N log K))
+        # Top bids (highest price)
+        top_bids = heapq.nlargest(depth, self.bids.keys())
+        sorted_bids = [(p, self.bids[p]) for p in top_bids]
+        
+        # Top asks (lowest price)
+        top_asks = heapq.nsmallest(depth, self.asks.keys())
+        sorted_asks = [(p, self.asks[p]) for p in top_asks]
+        
+        # Periodic Cleanup (Every 100 calls?)
+        # For now, just keep growing to avoid delete overhead, or trim occasionally.
+        if len(self.bids) > 5000:
+            # Keep only top 1000
+            keep = heapq.nlargest(1000, self.bids.keys())
+            self.bids = {k: self.bids[k] for k in keep}
+            
+        if len(self.asks) > 5000:
+            # Keep only bottom 1000
+            keep = heapq.nsmallest(1000, self.asks.keys())
+            self.asks = {k: self.asks[k] for k in keep}
         
         # Pad if insufficient depth
         while len(sorted_bids) < depth: sorted_bids.append((0.0, 0.0))

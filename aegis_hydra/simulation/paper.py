@@ -307,24 +307,27 @@ class PaperTrader:
 
                 prev_price = mid_price
                 
-                # 5. Display
+                # 5. Display & Logging (Buffered)
                 net_latency = (ts_sec - loop_start) * 1000
                 true_latency = (time.time() - eng_start) * 1000
                 
-                status = (
-                    f"Step {step:05d} | "
-                    f"BTC: {mid_price:,.2f} | "
-                    f"M: {magnetization:+.3f} | "
-                    f"Pos: {self.position:+.1f} | "
-                    f"Net: {net_latency:.0f}ms | "
-                    f"Wait: {(ts_sec - candle_start_time):.1f}s | "
-                    f"True: {true_latency:.1f}ms"
-                )
-                print(status, end="\r")
-                sys.stdout.flush()
+                # Only update display every 10 steps (reduces I/O lag)
+                if step % 10 == 0:
+                    status = (
+                        f"Step {step:05d} | "
+                        f"BTC: {mid_price:,.2f} | "
+                        f"M: {magnetization:+.3f} | "
+                        f"Pos: {self.position:+.1f} | "
+                        f"Net: {net_latency:.0f}ms | "
+                        f"Wait: {(ts_sec - candle_start_time):.1f}s | "
+                        f"True: {true_latency:.1f}ms"
+                    )
+                    sys.stdout.write(status + "\r")
+                    sys.stdout.flush()
                 
-                # Dump State
+                # Capture State Every 2 Steps (High resolution)
                 if step % 2 == 0: 
+                    # Add to RAM history (for JSON snapshot)
                     self.history.append({
                         "time": datetime.now().isoformat(),
                         "step": step,
@@ -335,20 +338,29 @@ class PaperTrader:
                         "latency": true_latency
                     })
                     
-                    with open("paper_log.csv", "a") as f:
-                        f.write(f"{datetime.now().isoformat()},{step},{mid_price},{self.capital},{magnetization},{self.position},{true_latency}\n")
+                    # Buffer CSV Line (RAM Only)
+                    if not hasattr(self, 'csv_buffer'): self.csv_buffer = []
+                    self.csv_buffer.append(f"{datetime.now().isoformat()},{step},{mid_price},{self.capital},{magnetization},{self.position},{true_latency}\n")
+                    
+                    # Flush Buffer to Disk (Every 100 lines)
+                    if len(self.csv_buffer) >= 100:
+                        with open("paper_log.csv", "a") as f:
+                            f.writelines(self.csv_buffer)
+                        self.csv_buffer = [] # Clear buffer
 
                     import json
-                    with open("paper_state.json", "w") as f:
-                        json.dump(self.history[-1000:], f)
+                    # Write JSON State every 500 steps (heavy op, snapshot only)
+                    if step % 500 == 0:
+                        with open("paper_state.json", "w") as f:
+                            json.dump(self.history[-1000:], f)
                 
                 step += 1
                 candle_start_time = time.time() # Reset candle timer
                 
                 # Event-Driven: Ultra-fast yield
-                await asyncio.sleep(0)
+                await asyncio.sleep(0) # Yield to event loop
                 
-                if step % 200 == 0:
+                if step % 1000 == 0:
                     gc.collect()
 
         except KeyboardInterrupt:
