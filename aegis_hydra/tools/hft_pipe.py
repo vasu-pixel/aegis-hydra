@@ -30,11 +30,20 @@ async def run_pipe(product_id="BTC-USD"):
         bufsize=0 # Unbuffered
     )
     
+    # 3. State Tracker
+    class Tracker:
+        capital = 10000.0
+        position = 0.0
+        prev_price = 0.0
+        fee_rate = 0.0005 # Same as PaperTrader
+
+    tracker = Tracker()
+    state_history = []
+
     print("=== HIGH FREQUENCY PIPE ESTABLISHED ===")
     print("Python (WS) -> [Binary Float] -> C++ (Engine)")
     
-    # 3. Non-blocking Signal Reader
-    state_history = []
+    # 4. Non-blocking Signal Reader
     async def read_signals(stdout):
         while True:
             line = await loop.run_in_executor(None, stdout.readline)
@@ -54,9 +63,9 @@ async def run_pipe(product_id="BTC-USD"):
                         "time": datetime.now().isoformat(),
                         "step": step_val,
                         "price": price_val,
-                        "capital": 10000.0, # Placeholder or keep track?
+                        "capital": tracker.capital,
                         "magnetization": mag_val,
-                        "position": 0.0, # Placeholder
+                        "position": tracker.position,
                         "latency": lat_val
                     }
                     state_history.append(state_obj)
@@ -66,6 +75,27 @@ async def run_pipe(product_id="BTC-USD"):
                         json.dump(state_history[-1000:], f)
             else:
                 print(f"\n[DAEMON SIGNAL] {datetime.now().strftime('%H:%M:%S.%f')} | {decoded}")
+                
+                # Signal Processing logic (Update position/capital)
+                parts = decoded.split()
+                if not parts: continue
+                
+                signal_type = parts[0]
+                price_at_signal = float(parts[1]) if len(parts) > 1 else tracker.prev_price
+                
+                old_pos = tracker.position
+                if signal_type == "BUY":
+                    tracker.position = 1.0
+                elif signal_type == "SELL":
+                    tracker.position = -1.0
+                elif signal_type.startswith("CLOSE"):
+                    tracker.position = 0.0
+                
+                # Deduct fees on trade
+                if tracker.position != old_pos:
+                    fee = abs(tracker.position - old_pos) * tracker.capital * tracker.fee_rate
+                    tracker.capital -= fee
+
                 # Append signal to a local log
                 with open("hft_signals.csv", "a") as f:
                     f.write(f"{datetime.now().isoformat()},{decoded}\n")
@@ -74,7 +104,7 @@ async def run_pipe(product_id="BTC-USD"):
     import json
     asyncio.create_task(read_signals(process.stdout))
 
-    # 4. Data Storage Buffer
+    # 5. Data Storage Buffer
     data_buffer = []
     log_file = "hft_market_data.csv"
     
@@ -85,6 +115,12 @@ async def run_pipe(product_id="BTC-USD"):
             price, bids, asks = ws.get_data()
             
             if price > 0:
+                # Update Capital based on price movement
+                if tracker.prev_price > 0:
+                    pct_change = (price - tracker.prev_price) / tracker.prev_price
+                    tracker.capital += tracker.position * tracker.capital * pct_change
+                tracker.prev_price = price
+
                 # 4. Write to Pipe (4 bytes)
                 try:
                     process.stdin.write(struct.pack('f', price))
