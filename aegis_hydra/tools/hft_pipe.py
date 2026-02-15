@@ -31,10 +31,16 @@ def log_csv_sync(filename, lines):
     except: pass
 
 async def run_pipe(product_id="BTC-USD"):
-    # 0. Zero Jitter Tuning
-    gc.disable()
+    # 0. Zero Jitter Tuning: Kill the Garbage Collector
+    gc.collect() # Clean up once
+    gc.freeze()  # Move all current objects to permanent generation 
+    gc.disable() # Stop all future collections
+    # Set thresholds to 0 for extra safety
+    try: gc.set_threshold(0) 
+    except: pass
+
     try:
-        os.nice(-19) # Maximum priority
+        os.nice(-20) # Absolute Priority
     except:
         pass
         
@@ -114,36 +120,35 @@ async def run_pipe(product_id="BTC-USD"):
             message, recv_time = await msg_queue.get()
             
             # FAST PATH: String processing (Zero JSON Allocation)
-            # websocket.recv() returns str for text frames
             is_l2 = '"channel":"l2_data"' in message
             is_ticker = '"channel":"ticker"' in message
-            is_update = '"type":"update"' in message
             
             price = 0.0
             channel = "unknown"
             
-            if (is_l2 and is_update) or is_ticker:
-                # Optimized extraction
+            if is_ticker:
+                # Optimized extraction for trade price
                 price_match = price_re.search(message)
                 if price_match:
                     price = float(price_match.group(1))
-                    channel = "l2_data" if is_l2 else "ticker"
-                    
-                    # Update internal state lightly
-                    if is_ticker:
-                        ws.latest_ticker_price = price
-                        ws.ready = True 
+                    ws.latest_ticker_price = price
+                    ws.ready = True
+                    channel = "ticker"
                 else:
-                    # Fallback to slow path
                     data = await loop.run_in_executor(parse_executor, json.loads, message)
-                    channel = data.get("channel")
-                    if channel == "l2_data": ws._handle_l2(data)
-                    elif channel == "ticker": ws._handle_ticker(data)
+                    ws._handle_ticker(data)
                     price = ws.get_mid_price()
-            else:
-                # Snapshots or other types: Slow Path
+            elif is_l2:
+                # Must update book to get accurate mid-price
+                # But we use the now-optimized heap-based handle_l2
                 data = await loop.run_in_executor(parse_executor, json.loads, message)
-                channel = data.get("channel")
+                ws._handle_l2(data)
+                price = ws.get_mid_price()
+                channel = "l2_data"
+            else:
+                # Other messages (Snapshots, etc.)
+                data = await loop.run_in_executor(parse_executor, json.loads, message)
+                channel = data.get("channel", "unknown")
                 if channel == "l2_data": ws._handle_l2(data)
                 elif channel == "ticker": ws._handle_ticker(data)
                 price = ws.get_mid_price()

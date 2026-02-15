@@ -13,50 +13,72 @@ logger = logging.getLogger(__name__)
 class OrderBook:
     bids: Dict[float, float] = field(default_factory=dict)
     asks: Dict[float, float] = field(default_factory=dict)
-    best_bid: float = 0.0
-    best_ask: float = 0.0
+    bid_heap: List[float] = field(default_factory=list) # max heap (invert prices)
+    ask_heap: List[float] = field(default_factory=list) # min heap
     timestamp: float = 0.0
     
     def update(self, side: str, price: float, size: float):
-        target = self.bids if side == 'bid' else self.asks
+        import heapq
+        target_dict = self.bids if side == 'bid' else self.asks
+        target_heap = self.bid_heap if side == 'bid' else self.ask_heap
+        
         if size == 0:
-            target.pop(price, None)
-            if side == 'bid' and price == self.best_bid:
-                self.best_bid = max(self.bids.keys()) if self.bids else 0.0
-            if side == 'ask' and price == self.best_ask:
-                self.best_ask = min(self.asks.keys()) if self.asks else 0.0
+            target_dict.pop(price, None)
+            # Lazy removal: we don't remove from heap here.
         else:
-            target[price] = size
-            if side == 'bid' and (price > self.best_bid or self.best_bid == 0):
-                self.best_bid = price
-            if side == 'ask' and (price < self.best_ask or self.best_ask == 0):
-                self.best_ask = price
+            target_dict[price] = size
+            if side == 'bid':
+                heapq.heappush(self.bid_heap, -price)
+            else:
+                heapq.heappush(self.ask_heap, price)
 
-    def get_snapshot(self, depth: int = 50) -> Tuple[List[float], List[float]]:
+    @property
+    def best_bid(self) -> float:
+        import heapq
+        while self.bid_heap:
+            price = -self.bid_heap[0]
+            if price in self.bids and self.bids[price] > 0:
+                return price
+            heapq.heappop(self.bid_heap)
+        return 0.0
+
+    @property
+    def best_ask(self) -> float:
+        import heapq
+        while self.ask_heap:
+            price = self.ask_heap[0]
+            if price in self.asks and self.asks[price] > 0:
+                return price
+            heapq.heappop(self.ask_heap)
+        return 0.0
+
+    def get_snapshot(self, depth: int = 50) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
         import heapq
         
-        # Optimize: Avoid full sort (O(N log N)) using heapq (O(N log K))
-        top_bids = heapq.nlargest(depth, self.bids.keys())
-        sorted_bids = [(p, self.bids[p]) for p in top_bids]
+        # Snapshots can be slow, but they happen in background maintenance thread or dashboard
+        # For snapshot, we still need to filter the heaps
+        bids_out = []
+        temp_bids = []
+        while self.bid_heap and len(bids_out) < depth:
+            p = -heapq.heappop(self.bid_heap)
+            if p in self.bids and self.bids[p] > 0:
+                bids_out.append((p, self.bids[p]))
+            temp_bids.append(-p)
+        for p in temp_bids: heapq.heappush(self.bid_heap, p)
+
+        asks_out = []
+        temp_asks = []
+        while self.ask_heap and len(asks_out) < depth:
+            p = heapq.heappop(self.ask_heap)
+            if p in self.asks and self.asks[p] > 0:
+                asks_out.append((p, self.asks[p]))
+            temp_asks.append(p)
+        for p in temp_asks: heapq.heappush(self.ask_heap, p)
+
+        while len(bids_out) < depth: bids_out.append((0.0, 0.0))
+        while len(asks_out) < depth: asks_out.append((0.0, 0.0))
         
-        top_asks = heapq.nsmallest(depth, self.asks.keys())
-        sorted_asks = [(p, self.asks[p]) for p in top_asks]
-        
-        # Periodic Cleanup - ONLY during snapshots, not during price requests
-        if len(self.bids) > 10000:
-            keep = heapq.nlargest(2000, self.bids.keys())
-            self.bids = {k: self.bids[k] for k in keep}
-            self.best_bid = max(self.bids.keys()) if self.bids else 0.0
-            
-        if len(self.asks) > 10000:
-            keep = heapq.nsmallest(2000, self.asks.keys())
-            self.asks = {k: self.asks[k] for k in keep}
-            self.best_ask = min(self.asks.keys()) if self.asks else 0.0
-        
-        while len(sorted_bids) < depth: sorted_bids.append((0.0, 0.0))
-        while len(sorted_asks) < depth: sorted_asks.append((0.0, 0.0))
-        
-        return sorted_bids, sorted_asks
+        return bids_out, asks_out
 
 class CoinbaseWebSocket:
     """
