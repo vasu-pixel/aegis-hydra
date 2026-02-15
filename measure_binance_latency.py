@@ -13,20 +13,20 @@ from collections import deque
 import statistics
 
 async def measure_latency():
-    """Connect to Binance and measure true network latency."""
+    """Connect to Binance US and measure true network latency."""
 
-    WS_URL = "wss://stream.binance.com:9443/stream"
-    symbol = "btcusdt"  # BTC-USDT
+    WS_URL = "wss://stream.binance.us:9443/stream"
+    symbol = "btcusd"  # BTC-USD (Binance.US uses USD not USDT)
 
     latencies = deque(maxlen=100)
     total_messages = 0
 
     print("=" * 80)
-    print("🔬 TRUE LATENCY MEASUREMENT - BINANCE")
+    print("🔬 TRUE LATENCY MEASUREMENT - BINANCE.US")
     print("=" * 80)
     print(f"Connecting to: {WS_URL}")
     print(f"Symbol: {symbol.upper()}")
-    print(f"Measuring network latency (Binance → Your Server)\n")
+    print(f"Measuring network latency (Binance.US → Your Server)\n")
 
     streams = f"{symbol}@trade"
     url = f"{WS_URL}?streams={streams}"
