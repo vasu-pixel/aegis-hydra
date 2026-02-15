@@ -280,7 +280,8 @@ async def run_pipe(product_id="BTC-USD"):
         "time": "", "step": 0, "price": 0.0, "capital": 100.0,
         "mlofi": 0.0, "criticality": 0.0, "volatility": 0.0,
         "position": 0.0, "latency": 0.0,
-        "net_latency": 0.0, "threshold": 0.0
+        "net_latency": 0.0, "threshold": 0.0,
+        "parse_latency": 0.0, "read_latency": 0.0, "total_latency": 0.0
     }
 
     async def read_signals(stdout):
@@ -325,6 +326,11 @@ async def run_pipe(product_id="BTC-USD"):
                         # Signal read latency = total - parse - physics
                         # (Network is separate, already measured)
                         read_lat = max(0.0, total_latency - parse_lat - phys_lat)
+
+                        # Store in shared state for dashboard
+                        shared_state["parse_latency"] = parse_lat
+                        shared_state["read_latency"] = read_lat
+                        shared_state["total_latency"] = total_latency
 
                         # Store for stats (only valid positive values)
                         if net_lat >= 0:

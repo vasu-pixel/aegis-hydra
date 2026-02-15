@@ -11,9 +11,9 @@ from datetime import datetime
 def run_dashboard():
     print("Starting Dashboard... (Watching paper_state.json)")
     print("=== CRITICAL FLOW SNIPER DASHBOARD ===")
-    print("Displaying: MLOFI, Hawkes Criticality (n), Volatility, Dynamic Threshold")
+    print("Displaying: MLOFI, Hawkes Criticality (n), Volatility, Threshold, Latency")
     # plt.ion() # Removed for headless
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(10, 16), sharex=True)
+    fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(5, 1, figsize=(10, 20), sharex=True)
     
     while True:
         try:
@@ -32,7 +32,7 @@ def run_dashboard():
             df['time'] = pd.to_datetime(df['time'])
             
             # Clear axes
-            ax1.clear(); ax2.clear(); ax3.clear(); ax4.clear()
+            ax1.clear(); ax2.clear(); ax3.clear(); ax4.clear(); ax5.clear()
             
             # 1. Price & Trades
             ax1.plot(df['step'], df['price'], color='orange', label='BTC Price')
@@ -81,7 +81,40 @@ def run_dashboard():
 
             ax4.set_title("Market Regime Indicators (Trade only when n > 0.6)")
             ax4.grid(True, alpha=0.3)
-            
+
+            # 5. Latency Breakdown (Stacked Area Chart)
+            if 'net_latency' in df.columns and 'latency' in df.columns:
+                # Create latency components
+                net_lat = df['net_latency'].fillna(0)
+                parse_lat = df.get('parse_latency', pd.Series([0]*len(df))).fillna(0)
+                phys_lat = df['latency'].fillna(0)  # C++ physics latency
+                read_lat = df.get('read_latency', pd.Series([0]*len(df))).fillna(0)
+                total_lat = df.get('total_latency', pd.Series([0]*len(df))).fillna(0)
+
+                # Stacked area plot
+                ax5.fill_between(df['step'], 0, net_lat, alpha=0.7, color='blue', label='Network')
+                ax5.fill_between(df['step'], net_lat, net_lat + parse_lat, alpha=0.7, color='green', label='Parse')
+                ax5.fill_between(df['step'], net_lat + parse_lat, net_lat + parse_lat + phys_lat,
+                                alpha=0.7, color='purple', label='Physics (C++)')
+                ax5.fill_between(df['step'], net_lat + parse_lat + phys_lat,
+                                net_lat + parse_lat + phys_lat + read_lat,
+                                alpha=0.7, color='orange', label='Signal Read')
+
+                # Total latency line
+                if total_lat.max() > 0:
+                    ax5.plot(df['step'], total_lat, color='red', linewidth=2, linestyle='--',
+                            label=f'Total ({total_lat.iloc[-1]:.2f}ms)', alpha=0.8)
+
+                # Target line
+                ax5.axhline(8.0, color='red', linestyle=':', alpha=0.5, label='8ms Target')
+
+                ax5.set_ylabel("Latency (ms)")
+                ax5.set_xlabel("Step")
+                ax5.set_title("End-to-End Latency Breakdown (Lower is Better)")
+                ax5.legend(loc='upper right', fontsize=8)
+                ax5.grid(True, alpha=0.3)
+                ax5.set_ylim(bottom=0)
+
             plt.tight_layout()
             plt.savefig("live_dashboard.png")
             # plt.pause(0.1) # Don't need to show window if headless, saving png is enough for VS Code
