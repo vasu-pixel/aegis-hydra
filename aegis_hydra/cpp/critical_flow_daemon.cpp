@@ -43,8 +43,14 @@ int main() {
     }
 
     // Update order book
-    book.update_snapshot(packet.bid_prices, packet.bid_sizes, packet.ask_prices,
-                         packet.ask_sizes, 5);
+    // Copy to local aligned arrays to avoid packed-member warnings
+    float bid_p[5], bid_s[5], ask_p[5], ask_s[5];
+    std::memcpy(bid_p, packet.bid_prices, sizeof(bid_p));
+    std::memcpy(bid_s, packet.bid_sizes, sizeof(bid_s));
+    std::memcpy(ask_p, packet.ask_prices, sizeof(ask_p));
+    std::memcpy(ask_s, packet.ask_sizes, sizeof(ask_s));
+
+    book.update_snapshot(bid_p, bid_s, ask_p, ask_s, 5);
 
     // Record trades for Hawkes estimator
     if (packet.trade_count > 0) {

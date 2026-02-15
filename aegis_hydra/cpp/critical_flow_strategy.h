@@ -47,8 +47,6 @@ private:
   Signal current_side = Signal::HOLD;
 
 public:
-  enum class Signal { HOLD, BUY, SELL };
-
   // Update with new price tick
   void update_price(float mid_price, double timestamp) {
     if (prev_mid_price > 0.0f) {
