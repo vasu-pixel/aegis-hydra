@@ -76,8 +76,10 @@ class Population(eqx.Module):
     def step(
         self,
         states: Dict[str, Any],
-        market_tensor: Array,
+        prev_flow_ema: jax.Array,
+        price_history: jax.Array,
         key: jax.random.PRNGKey,
+        coupling: float = 1.0,
     ) -> Dict[str, Any]:
         """
         Advance all agents.
@@ -99,7 +101,7 @@ class Population(eqx.Module):
             "brownian": self.brownian.step(states["brownian"], market_tensor, k1, magnetization=M_prev),
             "entropic": self.entropic.step(states["entropic"], market_tensor, k2),
             "hamiltonian": self.hamiltonian.step(states["hamiltonian"], market_tensor, k3),
-            "ising": self.ising.step(states["ising"], h_ext, k4),
+            "ising": self.ising.step(states["ising"], h_ext, k4, J=coupling),
         }
 
     def aggregate(

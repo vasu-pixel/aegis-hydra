@@ -218,7 +218,11 @@ async def run_paper(config: dict, args: argparse.Namespace) -> None:
         symbol="BTC/USD", # Coinbase uses BTC/USD usually backtester/fetch_data logic
         initial_capital=sim_cfg.get("initial_capital", 10000.0),
         exchange_id=args.exchange,
-        temperature=args.temp
+        temperature=args.temp,
+        coupling=args.coupling,
+        viscosity_buy=args.viscosity_buy,
+        viscosity_sell=args.viscosity_sell,
+        min_hold_seconds=args.min_hold_seconds
     )
     
     await trader.run()
@@ -248,6 +252,9 @@ def main() -> None:
     parser.add_argument("--threshold", type=float, default=0.7, help="Magnetization Threshold")
     parser.add_argument("--grid-size", type=int, default=3162, help="Grid dim (size x size)")
     parser.add_argument("--exchange", type=str, default="coinbase", help="Exchange ID (ccxt)")
+    parser.add_argument("--viscosity_buy", type=float, default=0.85, help="Buy Threshold (>0.85)")
+    parser.add_argument("--viscosity_sell", type=float, default=0.2, help="Sell Threshold (<0.2)")
+    parser.add_argument("--min_hold_seconds", type=float, default=60.0, help="Minimum Hold Time")
     args = parser.parse_args()
 
     config = load_config(args.config)

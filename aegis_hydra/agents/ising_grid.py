@@ -74,6 +74,7 @@ class IsingGrid(eqx.Module):
         state: GridState,
         external_field: float, # Scalar h_ext (e.g. from price trend)
         key: jax.random.PRNGKey,
+        J: float = 1.0,        # Dynamic Coupling
     ) -> GridState:
         """
         Perform one Metropolis-Hastings step using Red-Black update.
@@ -86,17 +87,8 @@ class IsingGrid(eqx.Module):
         # We define a helper for the update logic to reuse for Red and Black
         def update_color(s_grid, mask, k):
             # 1. Calculate Local Field (Perception)
-            # H_local = -J * (Sum neighbors) - h_ext
-            # We need E_flip = 2 * sigma_i * H_local_i (change in energy if flipped)
-            # Actually DeltaE = E_new - E_old
-            # E_old = -H_local * sigma
-            # E_new = -H_local * (-sigma)
-            # DeltaE = 2 * sigma * H_local
-            # But H_local here implies the FIELD B. Energy = -B.sigma
-            # Field B = J * sum(neighbors) + h_ext
-            
             neighbor_sum = self._compute_local_field(s_grid)
-            total_field = self.J * neighbor_sum + external_field
+            total_field = J * neighbor_sum + external_field
             
             # Delta E if we flip sigma -> -sigma
             # Energy = -Field * sigma
