@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <deque>
+#include <iostream>
 #include <numeric>
 
 // Real-time Hawkes Process Branching Ratio Estimator
@@ -63,6 +64,23 @@ public:
       sq_sum += diff * diff;
     }
     double variance = sq_sum / trade_counts.size();
+
+    // DEBUG: Print internal stats occasionally
+    static int debug_counter = 0;
+    if (debug_counter++ % 50 == 0) {
+      std::cerr << "[HAWKES DEBUG] Mean: " << mean << " | Var: " << variance
+                << " | Count: " << trade_counts.size() << " | Window: "
+                << (timestamps.empty()
+                        ? 0.0
+                        : (timestamps.back() - timestamps.front()))
+                << "s"
+                << " | Raw Counts: [";
+      for (size_t i = 0; i < trade_counts.size(); ++i) {
+        std::cerr << trade_counts[i]
+                  << (i == trade_counts.size() - 1 ? "" : ", ");
+      }
+      std::cerr << "]" << std::endl;
+    }
 
     if (variance < 0.0001) {
       return 0.0f; // No variance
