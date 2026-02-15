@@ -138,8 +138,8 @@ class CoinbaseWebSocket:
             if event["type"] == "snapshot":
                 self.order_book.bids.clear()
                 self.order_book.asks.clear()
-                self.order_book.best_bid = 0.0
-                self.order_book.best_ask = 0.0
+                self.order_book.bid_heap.clear()
+                self.order_book.ask_heap.clear()
                 updates = event["updates"]
                 for update in updates:
                     side = update["side"] # 'bid' or 'ask'
