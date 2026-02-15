@@ -89,6 +89,7 @@ class PaperTrader:
         viscosity_buy: float = 0.85,
         viscosity_sell: float = 0.2,
         min_hold_seconds: float = 60.0,
+        aggregation_seconds: float = 5.0,
     ):
         self.population = population
         self.risk_guard = risk_guard
@@ -101,6 +102,7 @@ class PaperTrader:
         self.viscosity_buy = viscosity_buy
         self.viscosity_sell = viscosity_sell
         self.min_hold_seconds = min_hold_seconds
+        self.aggregation_seconds = aggregation_seconds
         
         self.position = 0.0 
         self.last_trade_time = 0.0 # For Cool-Down
@@ -124,6 +126,7 @@ class PaperTrader:
         print(f"Physics: T={self.temperature}, J={self.coupling}")
         print(f"Strategy: Viscosity Buy>{self.viscosity_buy}, Sell<{self.viscosity_sell}")
         print(f"Cool-Down: {self.min_hold_seconds}s")
+        print(f"Aggregation: {self.aggregation_seconds}s")
         print("--------------------------------")
         
         # Initialize WebSocket
@@ -171,13 +174,13 @@ class PaperTrader:
                 # Buffer Ticks for Candle
                 ticks_buffer.append(mid_price)
                 
-                # 2. Check Aggregation Timer (5 Seconds)
+                # 2. Check Aggregation Timer (Dynamic)
                 time_since_physics = ts_sec - last_physics_time
-                if time_since_physics < 5.0:
+                if time_since_physics < self.aggregation_seconds:
                     await asyncio.sleep(0.01) # Ultra-fast sleep
                     continue
                 
-                # === PHYSICS STEP (Every 5s) ===
+                # === PHYSICS STEP ===
                 last_physics_time = ts_sec
                 
                 # 2. Fill Buffer (NumPy) - Zero Allocation
