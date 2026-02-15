@@ -67,12 +67,17 @@ async def run_pipe(product_id="BTC-USD"):
         position = 0.0
         prev_price = 0.0
         entry_price = 0.0      # Track entry price for P&L calculation
-        entry_time = 0.0       # Track entry time for minimum hold
+        entry_time = 0.0       # Track entry time for stats
         fee_rate = 0.001       # Binance: 0.1% taker (vs Coinbase 0.6%)
 
-        # Safe trading parameters for low-fee environment
-        min_hold_seconds = 60  # Minimum 60s hold (prevents churn)
-        stop_loss_pct = -0.5   # Emergency exit at -0.5% loss (overrides min_hold)
+        # HFT MODE: ZERO RESTRICTIONS
+        min_hold_seconds = 0.0  # NO MINIMUM HOLD - Trade at physics speed!
+        stop_loss_pct = -2.0    # Wide stop loss (only for disasters)
+
+        # Stats tracking
+        total_trades = 0
+        winning_trades = 0
+        losing_trades = 0
 
     tracker = Tracker()
     state_history = []
@@ -114,12 +119,18 @@ async def run_pipe(product_id="BTC-USD"):
                 latency_buffer = []
                 loop.run_in_executor(io_executor, log_csv_sync, "hft_latency_breakdown.csv", lat_lines)
 
-            # Print position/capital status every 20 cycles (10 seconds)
+            # Print HFT stats every 20 cycles (10 seconds)
             if maintenance_counter % 20 == 0:
                 pnl = tracker.capital - 100.0
                 pnl_pct = (pnl / 100.0) * 100
                 pos_str = "LONG 📈" if tracker.position > 0 else ("SHORT 📉" if tracker.position < 0 else "FLAT")
-                print(f"\n💰 ACCOUNT | Capital: ${tracker.capital:.2f} | P&L: {pnl:+.2f} ({pnl_pct:+.2f}%) | Position: {pos_str}\n")
+
+                # Calculate win rate
+                total = tracker.winning_trades + tracker.losing_trades
+                win_rate = (tracker.winning_trades / total * 100) if total > 0 else 0
+
+                print(f"\n⚡ HFT STATS | Cap: ${tracker.capital:.2f} | P&L: {pnl:+.2f} ({pnl_pct:+.2f}%) | "
+                      f"Trades: {tracker.total_trades} | W/L: {tracker.winning_trades}/{tracker.losing_trades} ({win_rate:.0f}%) | Pos: {pos_str}\n")
 
             # Print latency stats every 500ms
             if latency_stats['total']:
@@ -338,23 +349,22 @@ async def run_pipe(product_id="BTC-USD"):
                 current_price = float(parts[-1]) if len(parts) > 1 else tracker.prev_price
 
                 old_pos = tracker.position
-                should_execute = True
-                close_reason = ""
+                pnl_pct = 0.0
 
-                # Entry signals: BUY or SELL
+                # Entry signals: BUY or SELL - IMMEDIATE EXECUTION
                 if parts[0] == "BUY":
                     tracker.position = 1.0
                     tracker.entry_price = current_price
                     tracker.entry_time = time.time()
-                    print(f"  📈 LONG ENTRY @ {current_price:.2f}")
+                    print(f"  ⚡ LONG @ {current_price:.2f}")
 
                 elif parts[0] == "SELL":
                     tracker.position = -1.0
                     tracker.entry_price = current_price
                     tracker.entry_time = time.time()
-                    print(f"  📉 SHORT ENTRY @ {current_price:.2f}")
+                    print(f"  ⚡ SHORT @ {current_price:.2f}")
 
-                # Exit signals: CLOSE_LONG or CLOSE_SHORT
+                # Exit signals: CLOSE_LONG or CLOSE_SHORT - IMMEDIATE EXECUTION
                 elif parts[0].startswith("CLOSE"):
                     if tracker.entry_price > 0 and old_pos != 0:
                         # Calculate P&L %
@@ -363,34 +373,35 @@ async def run_pipe(product_id="BTC-USD"):
                         else:  # Closing short
                             pnl_pct = ((tracker.entry_price - current_price) / tracker.entry_price) * 100
 
-                        # Calculate hold time
-                        hold_time = time.time() - tracker.entry_time if tracker.entry_time > 0 else 999
+                        hold_time = time.time() - tracker.entry_time if tracker.entry_time > 0 else 0
 
-                        # STOP LOSS CHECK (overrides all other rules)
-                        if pnl_pct <= tracker.stop_loss_pct:
-                            tracker.position = 0.0
-                            close_reason = f"🛑 STOP LOSS: {pnl_pct:+.2f}% (held {hold_time:.1f}s)"
-
-                        # MINIMUM HOLD CHECK (prevents churn)
-                        elif hold_time < tracker.min_hold_seconds:
-                            should_execute = False
-                            close_reason = f"⏱️  HOLD REQUIRED: {hold_time:.1f}s < {tracker.min_hold_seconds}s min (P&L: {pnl_pct:+.2f}%)"
-
-                        # NORMAL EXIT (held long enough, close regardless of P&L)
+                        # Track win/loss
+                        if pnl_pct > 0:
+                            tracker.winning_trades += 1
                         else:
-                            tracker.position = 0.0
-                            close_reason = f"✅ CLOSE: {pnl_pct:+.2f}% after {hold_time:.1f}s"
+                            tracker.losing_trades += 1
 
-                        print(f"  {close_reason}")
-                    else:
-                        tracker.position = 0.0  # Allow close if no entry tracked
+                        # Wide stop loss (only for disasters)
+                        if pnl_pct <= tracker.stop_loss_pct:
+                            print(f"  🛑 STOP: {pnl_pct:+.2f}% | {hold_time:.1f}s")
+                        else:
+                            print(f"  ⚡ EXIT: {pnl_pct:+.2f}% | {hold_time:.2f}s")
 
-                # Execute position change and deduct fees
-                if tracker.position != old_pos and should_execute:
+                    tracker.position = 0.0
+
+                # Execute ALL position changes immediately (HFT mode)
+                if tracker.position != old_pos:
+                    tracker.total_trades += 1
                     fee = abs(tracker.position - old_pos) * tracker.capital * tracker.fee_rate
                     tracker.capital -= fee
-                    print(f"  💸 Fee: ${fee:.4f} (Capital: ${tracker.capital:.2f})")
-                    signal_buffer.append(f"{time.time()},{decoded},{current_price:.2f}\n")
+
+                    # Calculate net P&L after fees
+                    if old_pos != 0 and pnl_pct != 0:
+                        gross_pnl = tracker.capital * (pnl_pct / 100)
+                        net_pnl = gross_pnl - fee
+                        print(f"  💰 Net: {net_pnl:+.4f} | Fee: {fee:.4f} | Cap: ${tracker.capital:.2f}")
+
+                    signal_buffer.append(f"{time.time()},{decoded},{current_price:.2f},{pnl_pct:.4f}\n")
 
     asyncio.create_task(read_signals(process.stdout))
     asyncio.create_task(background_maintenance())
@@ -407,10 +418,13 @@ async def run_pipe(product_id="BTC-USD"):
     async with websockets.connect(binance_url, max_size=None,
                                    ping_interval=20, ping_timeout=10) as socket:
         # Binance doesn't require subscription messages - streams are in URL
-        print("🔥 BINANCE Network Listener HOT - 12x Lower Fees!")
-        print(f"   Trading: {product_id}")
-        print(f"   Fees: 0.1% taker (vs Coinbase 0.6%)")
-        print(f"   Savings: 0.5% per trade = 5x more profit!\n")
+        print("⚡ ULTRA-HFT MODE ACTIVATED ⚡")
+        print(f"   Exchange: Binance.US")
+        print(f"   Symbol: {product_id}")
+        print(f"   Fees: 0.1% taker")
+        print(f"   Speed: ZERO RESTRICTIONS - Trade at physics speed!")
+        print(f"   Min Hold: {tracker.min_hold_seconds:.1f}s (INSTANT)")
+        print(f"   Stop Loss: {tracker.stop_loss_pct:.1f}% (Wide)\n")
         print("📊 Latency Display Format:")
         print("   Net    = Network latency (exchange to you)")
         print("   Parse  = Python message parsing time")
