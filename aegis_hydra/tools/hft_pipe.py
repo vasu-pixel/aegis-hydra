@@ -1,16 +1,23 @@
-
 import asyncio
 import struct
 import sys
 import os
 import time
 import subprocess
+import gc
 from datetime import datetime
 
 # Absolute Path to Daemon
 DAEMON_PATH = os.path.join(os.path.dirname(__file__), '../cpp/aegis_daemon')
 
 async def run_pipe(product_id="BTC-USD"):
+    # 0. Zero Jitter Tuning
+    gc.disable() # Stop automatic GC pauses
+    try:
+        os.nice(-10) # Priority boost (requires sudo/perms, fails gracefully)
+    except:
+        pass
+        
     # 1. Connect WS
     from ..market.coinbase_ws import CoinbaseWebSocket
     ws = CoinbaseWebSocket(product_id)
@@ -40,26 +47,46 @@ async def run_pipe(product_id="BTC-USD"):
 
     tracker = Tracker()
     state_history = []
+    data_buffer = [] # Shared buffer for background logging
+    signal_buffer = []
 
     print("=== HIGH FREQUENCY PIPE ESTABLISHED ===")
     print("Python (WS) -> [Binary Float] -> C++ (Engine)")
     
-    # 4. Non-blocking Signal Reader
-    state_history = []
-    
-    async def sync_dashboard():
-        """Periodic background task to update paper_state.json without blocking trading."""
+    # 4. Background Sync Task (All I/O and GC happens here)
+    async def background_maintenance():
+        """Periodic background task to handle disk I/O and GC without blocking trading."""
+        nonlocal data_buffer, signal_buffer
+        log_file = "hft_market_data.csv"
+        
         while True:
             await asyncio.sleep(0.2) # Update every 200ms
+            
+            # 1. Dashboard State
             if state_history:
                 try:
-                    # Write only the last 1000 points to keep it fast
                     with open("paper_state.json", "w") as f:
                         json.dump(state_history[-1000:], f)
                 except Exception as e:
-                    print(f"Dashboard Sync Error: {e}")
+                    print(f"Dashboard Update Error: {e}")
+            
+            # 2. Market Data Logging (Batch)
+            if data_buffer:
+                with open(log_file, "a") as f:
+                    f.writelines(data_buffer)
+                data_buffer = []
+                
+            # 3. Signal Logging
+            if signal_buffer:
+                with open("hft_signals.csv", "a") as f:
+                    f.writelines(signal_buffer)
+                signal_buffer = []
+            
+            # 4. Incremental GC (Generation 0 only)
+            gc.collect(0)
 
     async def read_signals(stdout):
+        nonlocal signal_buffer
         while True:
             line = await loop.run_in_executor(None, stdout.readline)
             if not line: break
@@ -84,7 +111,6 @@ async def run_pipe(product_id="BTC-USD"):
                         "latency": lat_val
                     }
                     state_history.append(state_obj)
-                    # Cap memory usage
                     if len(state_history) > 2000:
                         state_history[:] = state_history[-1000:]
             else:
@@ -110,19 +136,15 @@ async def run_pipe(product_id="BTC-USD"):
                     fee = abs(tracker.position - old_pos) * tracker.capital * tracker.fee_rate
                     tracker.capital -= fee
 
-                # Append signal to a local log
-                with open("hft_signals.csv", "a") as f:
-                    f.write(f"{datetime.now().isoformat()},{decoded}\n")
+                # Add to signal buffer for background writing
+                signal_buffer.append(f"{datetime.now().isoformat()},{decoded}\n")
 
     loop = asyncio.get_event_loop()
     import json
     asyncio.create_task(read_signals(process.stdout))
-    asyncio.create_task(sync_dashboard())
+    asyncio.create_task(background_maintenance())
 
-    # 5. Data Storage Buffer
-    data_buffer = []
-    log_file = "hft_market_data.csv"
-    
+    # 5. Core Low-Latency Loop (Zero I/O!)
     try:
         while True:
             # 3. Get Price (Fastest Path)
@@ -145,25 +167,21 @@ async def run_pipe(product_id="BTC-USD"):
                     break
                 
                 feed_latency = (time.time() - loop_start) * 1000
-                    
-                # Store data (Buffered)
+                # Just append to memory buffer. No disk access here!
                 data_buffer.append(f"{datetime.now().isoformat()},{price},{feed_latency:.3f}\n")
-                if len(data_buffer) >= 100:
-                    with open(log_file, "a") as f:
-                        f.writelines(data_buffer)
-                    data_buffer = []
             
-            # 1kHz Loop (Adjustable)
+            # 1kHz Loop (No I/O)
             await asyncio.sleep(0.001)
             
     except KeyboardInterrupt:
         print("Stopping...")
     finally:
-        # Final Flush
+        # Final Flush (Manual)
         if data_buffer:
-            with open(log_file, "a") as f:
+            with open("hft_market_data.csv", "a") as f:
                 f.writelines(data_buffer)
         process.terminate()
+        gc.enable()
 
 if __name__ == "__main__":
     # Fix import path
