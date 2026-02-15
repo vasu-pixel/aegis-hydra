@@ -92,10 +92,13 @@ async def run_pipe(product_id="BTC-USD"):
     }
 
     # 4. Background Tasks
+    maintenance_counter = 0
     async def background_maintenance():
-        nonlocal data_buffer, signal_buffer, latency_buffer, latency_stats
+        nonlocal data_buffer, signal_buffer, latency_buffer, latency_stats, maintenance_counter
         while True:
             await asyncio.sleep(0.5)
+            maintenance_counter += 1
+
             if state_history:
                 loop.run_in_executor(io_executor, save_state_sync, state_history[-500:])
             if data_buffer:
@@ -110,6 +113,13 @@ async def run_pipe(product_id="BTC-USD"):
                 lat_lines = latency_buffer[:]
                 latency_buffer = []
                 loop.run_in_executor(io_executor, log_csv_sync, "hft_latency_breakdown.csv", lat_lines)
+
+            # Print position/capital status every 20 cycles (10 seconds)
+            if maintenance_counter % 20 == 0:
+                pnl = tracker.capital - 100.0
+                pnl_pct = (pnl / 100.0) * 100
+                pos_str = "LONG 📈" if tracker.position > 0 else ("SHORT 📉" if tracker.position < 0 else "FLAT")
+                print(f"\n💰 ACCOUNT | Capital: ${tracker.capital:.2f} | P&L: {pnl:+.2f} ({pnl_pct:+.2f}%) | Position: {pos_str}\n")
 
             # Print latency stats every 500ms
             if latency_stats['total']:
