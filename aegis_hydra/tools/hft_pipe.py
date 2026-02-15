@@ -31,7 +31,7 @@ async def run_pipe(product_id="BTC-USD"):
     
     # 2. Launch Daemon
     process = subprocess.Popen(
-        [DAEMON_PATH, "1000"], # Grid Size 1000
+        [DAEMON_PATH, "256"], # Grid Size 256
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=sys.stderr, # Pass stderr through
