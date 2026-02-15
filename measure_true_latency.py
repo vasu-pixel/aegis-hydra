@@ -28,7 +28,7 @@ async def measure_latency():
     print(f"Product: {product_id}")
     print(f"Measuring network latency (Coinbase → Your Server)\n")
 
-    async with websockets.connect(WS_URL, max_size=None) as socket:
+    async with websockets.connect(WS_URL, max_size=None, ping_interval=20, ping_timeout=10) as socket:
         # Subscribe to ticker (has server timestamps)
         await socket.send(json.dumps({
             "type": "subscribe",
@@ -41,9 +41,18 @@ async def measure_latency():
         print("-" * 80)
 
         try:
+            timeout_count = 0
             while total_messages < 100:  # Measure 100 samples
-                message = await socket.recv()
-                recv_time = time.time()
+                try:
+                    message = await asyncio.wait_for(socket.recv(), timeout=5.0)
+                    recv_time = time.time()
+                    timeout_count = 0
+                except asyncio.TimeoutError:
+                    timeout_count += 1
+                    if timeout_count > 3:
+                        print("⚠️  No messages received for 15 seconds, connection may be stale")
+                        break
+                    continue
 
                 try:
                     data = json.loads(message)
