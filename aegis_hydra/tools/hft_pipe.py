@@ -12,15 +12,29 @@ from datetime import datetime
 # Absolute Path to Daemon
 DAEMON_PATH = os.path.join(os.path.dirname(__file__), '../cpp/aegis_daemon')
 
-# Optimization: Global Thread Pool for JSON parsing
-# Prevents Level 2 snapshot parsing from blocking the trading engine.
+# Optimization: Global Thread Pools
+# parse_executor: for JSON parsing
+# io_executor: for disk writes (CSV/JSON)
 parse_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+io_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+def save_state_sync(data):
+    try:
+        with open("paper_state.json", "w") as f:
+            json.dump(data, f)
+    except: pass
+
+def log_csv_sync(filename, lines):
+    try:
+        with open(filename, "a") as f:
+            f.writelines(lines)
+    except: pass
 
 async def run_pipe(product_id="BTC-USD"):
     # 0. Zero Jitter Tuning
     gc.disable()
     try:
-        os.nice(-15) # Very high priority
+        os.nice(-19) # Maximum priority
     except:
         pass
         
@@ -54,27 +68,25 @@ async def run_pipe(product_id="BTC-USD"):
     signal_buffer = []
 
     print("=== HIGH FREQUENCY ZERO-JITTER PIPE ===")
-    
-    # 4. Background Sync Task
+
     async def background_maintenance():
         nonlocal data_buffer, signal_buffer
         while True:
-            await asyncio.sleep(0.1) # Faster maintenance
+            await asyncio.sleep(0.2) # Reduced frequency for stability
+            
             if state_history:
-                try:
-                    with open("paper_state.json", "w") as f:
-                        json.dump(state_history[-500:], f)
-                except: pass
+                # Offload slow JSON dump to thread
+                loop.run_in_executor(io_executor, save_state_sync, state_history[-500:])
             
             if data_buffer:
-                with open("hft_market_data.csv", "a") as f:
-                    f.writelines(data_buffer)
+                lines_to_write = data_buffer[:]
                 data_buffer = []
+                loop.run_in_executor(io_executor, log_csv_sync, "hft_market_data.csv", lines_to_write)
                 
             if signal_buffer:
-                with open("hft_signals.csv", "a") as f:
-                    f.writelines(signal_buffer)
+                sigs_to_write = signal_buffer[:]
                 signal_buffer = []
+                loop.run_in_executor(io_executor, log_csv_sync, "hft_signals.csv", sigs_to_write)
             
             gc.collect(0)
 
