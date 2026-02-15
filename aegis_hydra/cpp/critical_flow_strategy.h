@@ -25,7 +25,7 @@ private:
     static constexpr float VOL_MULTIPLIER = 3.0f;     // Volatility buffer
     static constexpr float URGENCY_DISCOUNT = 0.0005f; // Criticality discount
 
-    static constexpr float MIN_HAWKES = 0.0f;  // Minimum n to trade (was 0.6f - TEST MODE)
+    static constexpr float MIN_HAWKES = 0.3f;  // Minimum n to trade (partial filtering)
     static constexpr float IDEAL_HAWKES = 0.7f; // Ideal n for trading
 
     float prev_mid_price = 0.0f;
