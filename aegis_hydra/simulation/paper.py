@@ -146,7 +146,7 @@ class PaperTrader:
             # Initialize Physics Engine
             if self.use_cpp:
                 from ..agents.cpp_grid import CppIsingGrid
-                grid_size = int(np.sqrt(self.population.ising.size)) # Infer from JAX config
+                grid_size = self.population.ising.width # Infer from JAX config
                 print(f"Initializing C++ Grid ({grid_size}x{grid_size})")
                 cpp_grid = CppIsingGrid(grid_size)
                 # JAX keys not needed for C++
