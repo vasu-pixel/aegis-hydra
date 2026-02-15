@@ -33,7 +33,7 @@ async def run_pipe(product_id="BTC-USD"):
     
     # 3. State Tracker
     class Tracker:
-        capital = 10000.0
+        capital = 100.0
         position = 0.0
         prev_price = 0.0
         fee_rate = 0.0005 # Same as PaperTrader
