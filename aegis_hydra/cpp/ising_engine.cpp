@@ -5,6 +5,10 @@
 #include <iostream>
 #include <mutex>
 #include <thread>
+#ifdef __linux__
+#include <pthread.h>
+#include <sched.h>
+#endif
 
 // Global Engine State
 class IsingEngine {
@@ -46,6 +50,14 @@ public:
   }
 
   void run_loop() {
+    // Set thread affinity to avoid core migration (reduces scheduler jitter)
+    #ifdef __linux__
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(0, &cpuset);  // Pin to core 0
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+    #endif
+
     while (running) {
       auto start = std::chrono::high_resolution_clock::now();
 
@@ -65,6 +77,14 @@ public:
       last_step_ms.store(diff.count(), std::memory_order_relaxed);
 
       steps++;
+
+      // Yield to prevent OS scheduler preemption spikes
+      // sched_yield() hints to scheduler without blocking
+      #ifdef __linux__
+      sched_yield();
+      #else
+      std::this_thread::yield();
+      #endif
     }
   }
 };

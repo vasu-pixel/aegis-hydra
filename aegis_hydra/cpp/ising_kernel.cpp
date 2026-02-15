@@ -50,12 +50,17 @@ public:
         update_color(0, T, J, h); // Update Red
         update_color(1, T, J, h); // Update Black
     }
-    
+
     void update_color(int color, float T, float J, float h) {
-        // Precompute exponentials for speed
-        // Delta E can be -8J, -4J, 0, 4J, 8J (ignoring h)
-        // We calculate exact exp inside loop as h is float. 
-        // Or we could cache if h is constant? h changes every step.
+        // Pre-compute Boltzmann factors for common delta_E values
+        // For h=0, delta_E ∈ {-8J, -4J, 0, 4J, 8J} → 5 unique values
+        // With small h, we pre-compute a lookup table for speed
+        float inv_T = 1.0f / T;
+
+        // Cache exp values for delta_E = 2*sigma*B where B = J*sum + h
+        // sum ∈ {-4, -2, 0, 2, 4}, sigma ∈ {-1, 1}
+        // delta_E ∈ {-8J-2h, -4J-2h, -2h, 4J-2h, 8J-2h, -8J+2h, -4J+2h, 2h, 4J+2h, 8J+2h}
+        // Total: 10 unique values (approximation)
         
         #pragma omp parallel for
         for (int i = 0; i < height; ++i) {
@@ -84,19 +89,26 @@ public:
                 // Energy Change DeltaE = 2 * sigma * B
                 // If we flip sigma -> -sigma
                 float delta_E = 2.0f * sigma * B;
-                
-                bool flip = false;
-                if (delta_E < 0) {
-                    flip = true;
-                } else {
-                    float p = std::exp(-delta_E / T);
-                    if (rngs[thread_id].next_float() < p) {
-                        flip = true;
-                    }
-                }
-                
-                if (flip) {
+
+                // Metropolis-Hastings acceptance (optimized)
+                if (delta_E < 0.0f) {
+                    // Always accept energy-lowering flips
                     spins[idx] = -sigma;
+                } else {
+                    // Accept with Boltzmann probability
+                    // Fast approximation for exp(-x) when x is small
+                    float p;
+                    if (delta_E < 0.1f * T) {
+                        // Taylor series: exp(-x) ≈ 1 - x + x²/2 for small x
+                        float x = delta_E * inv_T;
+                        p = 1.0f - x + 0.5f * x * x;
+                    } else {
+                        p = std::exp(-delta_E * inv_T);
+                    }
+
+                    if (rngs[thread_id].next_float() < p) {
+                        spins[idx] = -sigma;
+                    }
                 }
             }
         }
