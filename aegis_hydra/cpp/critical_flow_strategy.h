@@ -11,6 +11,9 @@
 // Critical-Flow Sniper Strategy
 // Combines OFI + Hawkes Criticality + Dynamic Thresholds
 class CriticalFlowStrategy {
+public:
+  enum class Signal { HOLD, BUY, SELL };
+
 private:
   HawkesEstimator hawkes;
   MLOFICalculator mlofi_calc;
