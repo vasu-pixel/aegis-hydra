@@ -120,20 +120,22 @@ class PaperTrader:
         
     async def run(self):
         print(f"=== PAPER TRADER INITIALIZED (Zero-Copy) ===")
-        print(f"Exchange: {self.exchange_id.upper()}")
+        print(f"Exchange: COINBASE (WebSocket)")
         print(f"Physics: T={self.temperature}, J={self.coupling}")
         print(f"Strategy: Viscosity Buy>{self.viscosity_buy}, Sell<{self.viscosity_sell}")
         print(f"Cool-Down: {self.min_hold_seconds}s")
         print("--------------------------------")
         
-        # Initialize Exchange
-        if not hasattr(ccxt, self.exchange_id):
-            print(f"Error: Exchange '{self.exchange_id}' not found.")
+        # Initialize WebSocket
+        try:
+            from ..market.coinbase_ws import CoinbaseWebSocket
+            ws_client = CoinbaseWebSocket(product_id="BTC-USD")
+            asyncio.create_task(ws_client.connect())
+            print("Coinbase WebSocket Connected (Background)")
+        except ImportError:
+            print("Error: Could not import CoinbaseWebSocket. Is websockets installed?")
             return
 
-        exchange_class = getattr(ccxt, self.exchange_id)
-        exchange = exchange_class({'enableRateLimit': True})
-        
         try:
             # Initialize Population
             rng_key = jax.random.PRNGKey(int(time.time()))
@@ -147,24 +149,24 @@ class PaperTrader:
             # Candle Aggregation Variables
             candle_start_time = time.time()
             ticks_buffer = []
+            
+            # Wait for WS Data
+            print("Waiting for initial L2 snapshot...")
+            while not ws_client.ready:
+                await asyncio.sleep(0.5)
+            print("Initial Flash Received. Starting Engine.")
 
             while True:
                 loop_start = time.time()
                 
-                # 1. Non-Blocking Fetch
-                try:
-                    # Parallel fetch
-                    ticker_task = exchange.fetch_ticker(self.symbol)
-                    book_task = exchange.fetch_order_book(self.symbol, limit=self.n_levels)
-                    
-                    ticker, book = await asyncio.gather(ticker_task, book_task)
-                except Exception as e:
-                    print(f"Data Error: {e}")
+                # 1. Non-Blocking Read from Memory (Zero Latency)
+                mid_price, bids, asks = ws_client.get_data()
+                
+                if mid_price == 0:
                     await asyncio.sleep(0.1)
                     continue
 
                 ts_sec = time.time()
-                mid_price = (book['bids'][0][0] + book['asks'][0][0]) / 2.0
                 
                 # Buffer Ticks for Candle
                 ticks_buffer.append(mid_price)
@@ -172,27 +174,22 @@ class PaperTrader:
                 # 2. Check Aggregation Timer (5 Seconds)
                 time_since_physics = ts_sec - last_physics_time
                 if time_since_physics < 5.0:
-                    await asyncio.sleep(0.1) # Fast sleep, keep fetching to fill buffer
+                    await asyncio.sleep(0.01) # Ultra-fast sleep
                     continue
                 
                 # === PHYSICS STEP (Every 5s) ===
                 last_physics_time = ts_sec
-                
-                # Use averaged price or last price? User said "feed it 5-second candles". 
-                # Ideally we pass OHLC, but our Tensor currently takes snapshot.
-                # Let's use the LAST snapshot but maybe we could smooth it?
-                # For now, stick to Snapshot at t=5s to match current tensor logic.
                 
                 # 2. Fill Buffer (NumPy) - Zero Allocation
                 self.market_buffer[0] = mid_price
                 self.market_buffer[1] = ts_sec
                 
                 # Fill bids/asks (upto 50)
-                n_bids = min(len(book['bids']), self.n_levels)
-                n_asks = min(len(book['asks']), self.n_levels)
+                n_bids = min(len(bids), self.n_levels)
+                n_asks = min(len(asks), self.n_levels)
                 
-                b_vols = [x[1] for x in book['bids'][:n_bids]]
-                a_vols = [x[1] for x in book['asks'][:n_asks]]
+                b_vols = [x[1] for x in bids[:n_bids]]
+                a_vols = [x[1] for x in asks[:n_asks]]
                 
                 self.market_buffer[2:2+n_bids] = b_vols
                 self.market_buffer[2+n_bids:52] = 0.0 # Pad remainder
@@ -205,6 +202,7 @@ class PaperTrader:
                 
                 (
                     grid_state, rng_key, agg,
+                    # New State
                     self.prev_bid_vol, self.prev_ask_vol, self.prev_flow_ema, self.price_history
                 ) = update_cycle_jit(
                     self.population, grid_state, rng_key,
@@ -219,9 +217,6 @@ class PaperTrader:
                 magnetization = float(agg["magnetization"])
                 
                 # Hysteresis (Viscosity) with Configurable Thresholds
-                # Entry: Strong Signal (> viscosity_buy)
-                # Exit:  Weak Signal (< viscosity_sell)
-                
                 target_pos = self.position # Default: Hold
                 
                 if abs(self.position) < 0.1: # Neutral
@@ -254,9 +249,7 @@ class PaperTrader:
                         with open("paper_trades.csv", "a") as f:
                             f.write(f"{datetime.now()},{mid_price},{side},{abs(trade_size)},{self.capital}\n")
                     else:
-                        # Logic: Signal says trade, but Cool-Down prevents it.
-                        # Do we log this? Maybe just ignore.
-                        pass
+                        pass # Cooling Down
 
                 prev_price = mid_price
                 
@@ -277,7 +270,7 @@ class PaperTrader:
                 sys.stdout.flush()
                 
                 # Dump State
-                if step % 2 == 0: # More frequent relative to steps (since steps are 5s now)
+                if step % 2 == 0: 
                     self.history.append({
                         "time": datetime.now().isoformat(),
                         "step": step,
@@ -298,7 +291,7 @@ class PaperTrader:
                 step += 1
                 candle_start_time = time.time() # Reset candle timer
                 
-                # Event-Driven: No sleep, just yield
+                # Event-Driven: Ultra-fast yield
                 await asyncio.sleep(0)
                 
                 if step % 200 == 0:
@@ -307,5 +300,5 @@ class PaperTrader:
         except KeyboardInterrupt:
             print("\n\n=== PAUSED ===")
         finally:
-            await exchange.close()
-            print("Exchange connection closed.")
+            print("Stopping...")
+
