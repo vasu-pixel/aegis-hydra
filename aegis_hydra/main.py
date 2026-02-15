@@ -223,7 +223,8 @@ async def run_paper(config: dict, args: argparse.Namespace) -> None:
         viscosity_buy=args.viscosity_buy,
         viscosity_sell=args.viscosity_sell,
         min_hold_seconds=args.min_hold_seconds,
-        aggregation_seconds=args.aggregation
+        aggregation_seconds=args.aggregation,
+        use_cpp=args.use_cpp
     )
     
     await trader.run()
@@ -257,6 +258,7 @@ def main() -> None:
     parser.add_argument("--viscosity_sell", type=float, default=0.2, help="Sell Threshold (<0.2)")
     parser.add_argument("--min_hold_seconds", type=float, default=60.0, help="Minimum Hold Time")
     parser.add_argument("--aggregation", type=float, default=5.0, help="Candle Aggregation Time (s)")
+    parser.add_argument("--use-cpp", action="store_true", help="Use C++ Core for Physics")
     args = parser.parse_args()
 
     config = load_config(args.config)

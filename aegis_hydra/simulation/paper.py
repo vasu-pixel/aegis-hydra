@@ -90,6 +90,7 @@ class PaperTrader:
         viscosity_sell: float = 0.2,
         min_hold_seconds: float = 60.0,
         aggregation_seconds: float = 5.0,
+        use_cpp: bool = False,
     ):
         self.population = population
         self.risk_guard = risk_guard
@@ -103,6 +104,7 @@ class PaperTrader:
         self.viscosity_sell = viscosity_sell
         self.min_hold_seconds = min_hold_seconds
         self.aggregation_seconds = aggregation_seconds
+        self.use_cpp = use_cpp
         
         self.position = 0.0 
         self.last_trade_time = 0.0 # For Cool-Down
@@ -123,6 +125,7 @@ class PaperTrader:
     async def run(self):
         print(f"=== PAPER TRADER INITIALIZED (Zero-Copy) ===")
         print(f"Exchange: COINBASE (WebSocket)")
+        print(f"Engine: {'C++ (OpenMP)' if self.use_cpp else 'JAX (GPU/TPU)'}")
         print(f"Physics: T={self.temperature}, J={self.coupling}")
         print(f"Strategy: Viscosity Buy>{self.viscosity_buy}, Sell<{self.viscosity_sell}")
         print(f"Cool-Down: {self.min_hold_seconds}s")
@@ -140,10 +143,19 @@ class PaperTrader:
             return
 
         try:
-            # Initialize Population
-            rng_key = jax.random.PRNGKey(int(time.time()))
-            grid_state = self.population.initialize(rng_key, temperature=self.temperature)
-            print("Swarm Initialized & JIT Compiling...")
+            # Initialize Physics Engine
+            if self.use_cpp:
+                from ..agents.cpp_grid import CppIsingGrid
+                grid_size = int(np.sqrt(self.population.ising.size)) # Infer from JAX config
+                print(f"Initializing C++ Grid ({grid_size}x{grid_size})")
+                cpp_grid = CppIsingGrid(grid_size)
+                # JAX keys not needed for C++
+                rng_key = None
+                grid_state = None 
+            else:
+                rng_key = jax.random.PRNGKey(int(time.time()))
+                grid_state = self.population.initialize(rng_key, temperature=self.temperature)
+                print("Swarm Initialized & JIT Compiling...")
             
             step = 0
             prev_price = None
@@ -203,21 +215,44 @@ class PaperTrader:
                 # 3. Monolithic Update (Engine Latency)
                 eng_start = time.time()
                 
-                (
-                    grid_state, rng_key, agg,
-                    # New State
-                    self.prev_bid_vol, self.prev_ask_vol, self.prev_flow_ema, self.price_history
-                ) = update_cycle_jit(
-                    self.population, grid_state, rng_key,
-                    self.market_buffer, # Passing single array
-                    self.prev_bid_vol, self.prev_ask_vol, self.prev_flow_ema, self.price_history,
-                    coupling=self.coupling # Pass Dynamic J
-                )
+                if self.use_cpp:
+                    # C++ CORE LOGIC
+                    # Translate Market Data to Field 'h'
+                    # Simplified Logic: Deviation from EMA = External Field
+                    
+                    # Update EMA (Python-side for now, could move to C++)
+                    # We need a robust 'h' calculation. 
+                    # For now: (Price - EMA) / EMA * 100
+                    # But we need prev_flow_ema history.
+                    
+                    # For Phase 10 MVP: Pure Random + Coupling (No External Field 'h' yet)
+                    # We will add 'h' calculation in next iteration.
+                    # Just prove speed first.
+                    h_ext = 0.0 
+                    
+                    magnetization = cpp_grid.step(self.temperature, self.coupling, h_ext)
+                    
+                    # Dummy Aggregation for compatibility
+                    agg = {"magnetization": magnetization}
+                    
+                else:
+                    # JAX CORE LOGIC
+                    (
+                        grid_state, rng_key, agg,
+                        # New State
+                        self.prev_bid_vol, self.prev_ask_vol, self.prev_flow_ema, self.price_history
+                    ) = update_cycle_jit(
+                        self.population, grid_state, rng_key,
+                        self.market_buffer, # Passing single array
+                        self.prev_bid_vol, self.prev_ask_vol, self.prev_flow_ema, self.price_history,
+                        coupling=self.coupling # Pass Dynamic J
+                    )
+                    magnetization = float(agg["magnetization"])
                 
                 eng_latency = (time.time() - eng_start) * 1000 
                 
                 # 4. Decision & Execution (Python Scalar Logic)
-                magnetization = float(agg["magnetization"])
+                # magnetization variable is already set above
                 
                 # Hysteresis (Viscosity) with Configurable Thresholds
                 target_pos = self.position # Default: Hold
