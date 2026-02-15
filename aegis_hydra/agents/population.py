@@ -76,8 +76,7 @@ class Population(eqx.Module):
     def step(
         self,
         states: Dict[str, Any],
-        prev_flow_ema: jax.Array,
-        price_history: jax.Array,
+        market_tensor: jax.Array,
         key: jax.random.PRNGKey,
         coupling: float = 1.0,
     ) -> Dict[str, Any]:
