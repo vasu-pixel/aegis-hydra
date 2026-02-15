@@ -98,16 +98,24 @@ public:
       std::cerr << "]" << std::endl;
     }
 
-    if (variance < 0.0001) {
-      return 0.0f; // No variance
+    // Burst/Clustering Estimator
+    // Standard variance ratios fail for sparse HFT data (Mean > Variance).
+    // Instead, we look for "Bursts" where a single bucket spike exceeds the
+    // background noise.
+
+    double max_count = 0.0;
+    for (double count : trade_counts) {
+      if (count > max_count)
+        max_count = count;
     }
 
-    // Ratio-Based Estimator
-    // If Var > Mean, it's clustered (n > 0).
-    // n = 1 - (Mean / Variance)
+    // If the peak activity is significantly higher than the average, we have
+    // clustering. n = 1 - (Mean / Max) Example: Mean=0.1, Max=1.0 -> n = 0.9
+    // (Critical) Example: Mean=1.0, Max=1.0 -> n = 0.0 (Regular/Poisson)
+
     float n = 0.0f;
-    if (variance > mean) {
-      n = 1.0f - (float)(mean / variance);
+    if (max_count > 0.001) {
+      n = 1.0f - (float)(mean / max_count);
     }
 
     // Clamp to valid range
