@@ -40,36 +40,6 @@ def update_cycle_jit(
     price_history: jax.Array,
     coupling: float = 1.0,  # <-- NEW: Dynamic J
 ):
-    # ... existing processing ...
-    
-    # 1. Process Market Data -> Tensor
-    flat_tensor, new_flow_ema, new_price_hist, debug_flow = process_tensor_jax(
-        mid_price, bid_vol, ask_vol, 
-        prev_bid_vol, prev_ask_vol, 
-        prev_flow_ema, price_history, timestamp
-    )
-    
-    # 2. Step Physics
-    key, step_key = jax.random.split(key)
-    new_grid_state = population.step(grid_state, flat_tensor, step_key, coupling=coupling)
-    
-    # ... existing aggregation ...
-
-    # Update Population.step signature
-    def step(
-        self,
-        states: Dict[str, Any],
-        market_tensor: Array,
-        key: jax.random.PRNGKey,
-        coupling: float = 1.0, # <-- NEW
-    ) -> Dict[str, Any]:
-        # ... logic ...
-        return {
-            "brownian": self.brownian.step(states["brownian"], market_tensor, k1, magnetization=M_prev),
-            "entropic": self.entropic.step(states["entropic"], market_tensor, k2),
-            "hamiltonian": self.hamiltonian.step(states["hamiltonian"], market_tensor, k3),
-            "ising": self.ising.step(states["ising"], h_ext, k4, J=coupling), # Pass J
-        }
     """
     Monolithic Update: Data -> Tensor -> Physics -> Aggregation.
     Runs entirely on GPU/Accelerator.
@@ -91,13 +61,16 @@ def update_cycle_jit(
     
     # 2. Step Physics
     key, step_key = jax.random.split(key)
-    new_grid_state = population.step(grid_state, flat_tensor, step_key)
+    new_grid_state = population.step(grid_state, flat_tensor, step_key, coupling=coupling)
     
     # 3. Aggregate
     agg = population.aggregate(new_grid_state)
     
     return (
         new_grid_state, key, agg, 
+        # New State
+        bid_vol, ask_vol, new_flow_ema, new_price_hist,
+    ) 
         # New State
         bid_vol, ask_vol, new_flow_ema, new_price_hist
     )
