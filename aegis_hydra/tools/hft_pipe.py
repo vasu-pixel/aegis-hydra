@@ -147,9 +147,9 @@ async def run_pipe(product_id="BTC-USD"):
     # 5. Core Low-Latency Loop (Zero I/O!)
     try:
         while True:
-            # 3. Get Price (Fastest Path)
+            # 3. Get Price (Fastest Path - O(1))
             loop_start = time.time()
-            price, bids, asks = ws.get_data()
+            price = ws.get_mid_price()
             
             if price > 0:
                 # Update Capital based on price movement

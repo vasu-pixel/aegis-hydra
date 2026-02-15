@@ -13,40 +13,46 @@ logger = logging.getLogger(__name__)
 class OrderBook:
     bids: Dict[float, float] = field(default_factory=dict)
     asks: Dict[float, float] = field(default_factory=dict)
+    best_bid: float = 0.0
+    best_ask: float = 0.0
     timestamp: float = 0.0
     
     def update(self, side: str, price: float, size: float):
         target = self.bids if side == 'bid' else self.asks
         if size == 0:
             target.pop(price, None)
+            if side == 'bid' and price == self.best_bid:
+                self.best_bid = max(self.bids.keys()) if self.bids else 0.0
+            if side == 'ask' and price == self.best_ask:
+                self.best_ask = min(self.asks.keys()) if self.asks else 0.0
         else:
             target[price] = size
+            if side == 'bid' and (price > self.best_bid or self.best_bid == 0):
+                self.best_bid = price
+            if side == 'ask' and (price < self.best_ask or self.best_ask == 0):
+                self.best_ask = price
 
     def get_snapshot(self, depth: int = 50) -> Tuple[List[float], List[float]]:
         import heapq
         
         # Optimize: Avoid full sort (O(N log N)) using heapq (O(N log K))
-        # Top bids (highest price)
         top_bids = heapq.nlargest(depth, self.bids.keys())
         sorted_bids = [(p, self.bids[p]) for p in top_bids]
         
-        # Top asks (lowest price)
         top_asks = heapq.nsmallest(depth, self.asks.keys())
         sorted_asks = [(p, self.asks[p]) for p in top_asks]
         
-        # Periodic Cleanup (Every 100 calls?)
-        # For now, just keep growing to avoid delete overhead, or trim occasionally.
-        if len(self.bids) > 5000:
-            # Keep only top 1000
-            keep = heapq.nlargest(1000, self.bids.keys())
+        # Periodic Cleanup - ONLY during snapshots, not during price requests
+        if len(self.bids) > 10000:
+            keep = heapq.nlargest(2000, self.bids.keys())
             self.bids = {k: self.bids[k] for k in keep}
+            self.best_bid = max(self.bids.keys()) if self.bids else 0.0
             
-        if len(self.asks) > 5000:
-            # Keep only bottom 1000
-            keep = heapq.nsmallest(1000, self.asks.keys())
+        if len(self.asks) > 10000:
+            keep = heapq.nsmallest(2000, self.asks.keys())
             self.asks = {k: self.asks[k] for k in keep}
+            self.best_ask = min(self.asks.keys()) if self.asks else 0.0
         
-        # Pad if insufficient depth
         while len(sorted_bids) < depth: sorted_bids.append((0.0, 0.0))
         while len(sorted_asks) < depth: sorted_asks.append((0.0, 0.0))
         
@@ -61,7 +67,7 @@ class CoinbaseWebSocket:
     def __init__(self, product_id: str = "BTC-USD"):
         self.product_id = product_id
         self.order_book = OrderBook()
-        self.latest_ticker: Optional[Dict] = None
+        self.latest_ticker_price = 0.0
         self.ready = False
         self.ws = None
         
@@ -72,7 +78,6 @@ class CoinbaseWebSocket:
                     self.ws = ws
                     logger.info(f"Connected to Coinbase WS ({self.product_id})")
                     
-                    # Subscribe
                     subscribe_msg = {
                         "type": "subscribe",
                         "product_ids": [self.product_id],
@@ -88,7 +93,6 @@ class CoinbaseWebSocket:
                     await ws.send(json.dumps(subscribe_ticker))
                     
                     logger.info("Subscribed to level2 & ticker")
-                    
                     await self._listen()
                     
             except Exception as e:
@@ -110,9 +114,10 @@ class CoinbaseWebSocket:
         events = data.get("events", [])
         for event in events:
             if event["type"] == "snapshot":
-                # Clear book and rebuild
                 self.order_book.bids.clear()
                 self.order_book.asks.clear()
+                self.order_book.best_bid = 0.0
+                self.order_book.best_ask = 0.0
                 updates = event["updates"]
                 for update in updates:
                     side = update["side"] # 'bid' or 'ask'
@@ -134,28 +139,27 @@ class CoinbaseWebSocket:
     def _handle_ticker(self, data):
         events = data.get("events", [])
         if events:
-            # Ticker update
-            # Ticker structure: {'type': 'update', 'tickers': [{'type': 'ticker', 'product_id': 'BTC-USD', 'price': '96200.5', ...}]}
             for event in events:
                 tickers = event.get("tickers", [])
                 if tickers:
-                    self.latest_ticker = tickers[0]
+                    self.latest_ticker_price = float(tickers[0].get("price", 0.0))
+
+    def get_mid_price(self) -> float:
+        """Fastest path O(1) for HFT pipe."""
+        if not self.ready:
+            return 0.0
+        
+        # Prefer Book Mid
+        if self.order_book.best_bid > 0 and self.order_book.best_ask > 0:
+            return (self.order_book.best_bid + self.order_book.best_ask) / 2.0
+        
+        return self.latest_ticker_price
 
     def get_data(self) -> Tuple[float, List[Tuple[float, float]], List[Tuple[float, float]]]:
-        """
-        Returns (mid_price, bids, asks)
-        """
+        """Slow path for Dashboard / Standard Backtesters."""
         if not self.ready:
             return 0.0, [], []
             
         bids, asks = self.order_book.get_snapshot(depth=50)
-        
-        # Calculate mid price from book if possible, else ticker
-        if bids and asks and bids[0][0] > 0 and asks[0][0] > 0:
-            mid = (bids[0][0] + asks[0][0]) / 2.0
-        elif self.latest_ticker:
-            mid = float(self.latest_ticker.get("price", 0.0))
-        else:
-            mid = 0.0
-            
+        mid = self.get_mid_price()
         return mid, bids, asks
