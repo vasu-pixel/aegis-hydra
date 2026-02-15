@@ -46,6 +46,9 @@ int main() {
                             packet.ask_prices, packet.ask_sizes, 5);
 
         // Record trades for Hawkes estimator
+        if (packet.trade_count > 0) {
+            std::cerr << "[C++] Received " << packet.trade_count << " trades" << std::endl;
+        }
         for (uint32_t i = 0; i < packet.trade_count; ++i) {
             strategy.record_trade();
         }

@@ -190,6 +190,10 @@ async def run_pipe(product_id="BTC-USD"):
                 # Count this trade for Hawkes estimator
                 trade_count_per_tick += 1
 
+                # Debug: Log trade counting every 10 trades
+                if trade_count_per_tick % 10 == 0:
+                    print(f"[TRADES] Counted {trade_count_per_tick} trades in current window")
+
                 # Optimized extraction for trade price (message is already a string)
                 price_match = price_re.search(message)
                 if price_match:
@@ -258,6 +262,10 @@ async def run_pipe(product_id="BTC-USD"):
                     *bid_prices, *bid_sizes, *ask_prices, *ask_sizes)
 
                 packet_queue.put_nowait(packet)
+
+                # Debug: Log when sending trade counts
+                if trade_count_per_tick > 0:
+                    print(f"[PACKET] Sending {trade_count_per_tick} trades to C++ daemon")
 
                 # Reset trade count for next tick
                 trade_count_per_tick = 0
