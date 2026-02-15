@@ -252,7 +252,8 @@ class PaperTrader:
                         "price": mid_price,
                         "capital": self.capital,
                         "magnetization": magnetization,
-                        "position": self.position
+                        "position": self.position,
+                        "latency": true_latency
                     })
                     if step % 50 == 0:
                         import json

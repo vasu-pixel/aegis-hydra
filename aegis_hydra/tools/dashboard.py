@@ -11,7 +11,7 @@ from datetime import datetime
 def run_dashboard():
     print("Starting Dashboard... (Watching paper_state.json)")
     # plt.ion() # Removed for headless
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(10, 16), sharex=True)
     
     while True:
         try:
@@ -30,9 +30,7 @@ def run_dashboard():
             df['time'] = pd.to_datetime(df['time'])
             
             # Clear axes
-            ax1.clear()
-            ax2.clear()
-            ax3.clear()
+            ax1.clear(); ax2.clear(); ax3.clear(); ax4.clear()
             
             # 1. Price & Trades
             ax1.plot(df['step'], df['price'], color='orange', label='BTC Price')
@@ -54,6 +52,13 @@ def run_dashboard():
             ax3.axhline(-0.7, color='red', linestyle='--', alpha=0.5)
             ax3.set_ylim(-1.1, 1.1)
             ax3.grid(True, alpha=0.3)
+
+            # 4. Latency
+            if 'latency' in df.columns:
+                ax4.plot(df['step'], df['latency'], color='blue', label='Latency (ms)')
+                ax4.set_ylabel("Latency (ms)")
+                ax4.set_title(f"System Latency (Current: {df['latency'].iloc[-1]:.1f}ms)")
+                ax4.grid(True, alpha=0.3)
             
             plt.tight_layout()
             plt.savefig("live_dashboard.png")
