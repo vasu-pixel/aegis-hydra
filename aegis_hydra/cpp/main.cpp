@@ -28,6 +28,7 @@ int main(int argc, char *argv[]) {
   // Format: 4 byte float (Price)
   float price_in;
   float last_mag = 0.0f;
+  long total_steps = 0;
 
   while (std::cin.read(reinterpret_cast<char *>(&price_in), sizeof(float))) {
     // 1. Update Engine (Atomic)
@@ -35,6 +36,14 @@ int main(int argc, char *argv[]) {
 
     // 2. Poll Result (Atomic)
     float mag = Engine_get_magnetization();
+    long steps = Engine_get_steps();
+
+    // Heartbeat every 100 prices
+    if (total_steps % 100 == 0) {
+      std::cerr << "\r[DAEMON] Price: " << price_in << " | M: " << mag
+                << " | Steps: " << steps << std::flush;
+    }
+    total_steps++;
 
     // 3. Logic (Simple Viscosity)
     // If mag crosses threshold, emit signal to stdout

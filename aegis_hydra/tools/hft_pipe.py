@@ -33,10 +33,28 @@ async def run_pipe(product_id="BTC-USD"):
     print("=== HIGH FREQUENCY PIPE ESTABLISHED ===")
     print("Python (WS) -> [Binary Float] -> C++ (Engine)")
     
+    # 3. Non-blocking Signal Reader
+    async def read_signals(stdout):
+        while True:
+            line = await loop.run_in_executor(None, stdout.readline)
+            if not line: break
+            decoded = line.decode().strip()
+            print(f"\n[DAEMON SIGNAL] {datetime.now().strftime('%H:%M:%S.%f')} | {decoded}")
+            # Append signal to a local log
+            with open("hft_signals.csv", "a") as f:
+                f.write(f"{datetime.now().isoformat()},{decoded}\n")
+
+    loop = asyncio.get_event_loop()
+    asyncio.create_task(read_signals(process.stdout))
+
+    # 4. Data Storage Buffer
+    data_buffer = []
+    log_file = "hft_market_data.csv"
+    
     try:
         while True:
             # 3. Get Price (Fastest Path)
-            price, _, _ = ws.get_data()
+            price, bids, asks = ws.get_data()
             
             if price > 0:
                 # 4. Write to Pipe (4 bytes)
@@ -47,18 +65,23 @@ async def run_pipe(product_id="BTC-USD"):
                     print("Daemon Died!")
                     break
                     
-                # 5. Read Signals (Non-blocking check?)
-                # For simplicity, we just PUSH data here. 
-                # Reading stdout requires another thread or asyncio stream.
-                # But since C++ only prints on signal, maybe we ignore reading for now?
-                # Actually, let's just loop.
+                # Store data (Buffered)
+                data_buffer.append(f"{datetime.now().isoformat()},{price}\n")
+                if len(data_buffer) >= 100:
+                    with open(log_file, "a") as f:
+                        f.writelines(data_buffer)
+                    data_buffer = []
             
-            # 1kHz Loop
+            # 1kHz Loop (Adjustable)
             await asyncio.sleep(0.001)
             
     except KeyboardInterrupt:
         print("Stopping...")
     finally:
+        # Final Flush
+        if data_buffer:
+            with open(log_file, "a") as f:
+                f.writelines(data_buffer)
         process.terminate()
 
 if __name__ == "__main__":
