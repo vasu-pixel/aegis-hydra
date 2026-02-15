@@ -69,9 +69,6 @@ def update_cycle_jit(
     return (
         new_grid_state, key, agg, 
         # New State
-        bid_vol, ask_vol, new_flow_ema, new_price_hist,
-    ) 
-        # New State
         bid_vol, ask_vol, new_flow_ema, new_price_hist
     )
 
