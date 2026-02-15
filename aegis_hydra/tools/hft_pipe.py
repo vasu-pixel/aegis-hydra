@@ -67,30 +67,78 @@ async def run_pipe(product_id="BTC-USD"):
     data_buffer = [] 
     signal_buffer = []
 
-    print("=== HIGH FREQUENCY ZERO-JITTER PIPE ===")
+    print("=== ZERO-WAIT DECOUPLED HFT PIPE ===")
 
+    msg_queue = asyncio.Queue(maxsize=5000)
+    packet_queue = asyncio.Queue(maxsize=5000)
+
+    # 4. Background Tasks
     async def background_maintenance():
         nonlocal data_buffer, signal_buffer
         while True:
-            await asyncio.sleep(0.2) # Reduced frequency for stability
-            
+            await asyncio.sleep(0.5) 
             if state_history:
-                # Offload slow JSON dump to thread
                 loop.run_in_executor(io_executor, save_state_sync, state_history[-500:])
-            
             if data_buffer:
-                lines_to_write = data_buffer[:]
+                lines = data_buffer[:]
                 data_buffer = []
-                loop.run_in_executor(io_executor, log_csv_sync, "hft_market_data.csv", lines_to_write)
-                
+                loop.run_in_executor(io_executor, log_csv_sync, "hft_market_data.csv", lines)
             if signal_buffer:
-                sigs_to_write = signal_buffer[:]
+                sigs = signal_buffer[:]
                 signal_buffer = []
-                loop.run_in_executor(io_executor, log_csv_sync, "hft_signals.csv", sigs_to_write)
-            
+                loop.run_in_executor(io_executor, log_csv_sync, "hft_signals.csv", sigs)
             gc.collect(0)
 
-    # 5. Signal Reader (C++ -> Python)
+    # 4b. Non-Blocking Pipe Writer
+    async def pipe_writer():
+        while True:
+            packet = await packet_queue.get()
+            try:
+                process.stdin.write(packet)
+                process.stdin.flush()
+            except BrokenPipeError: break
+            packet_queue.task_done()
+
+    # 5. Logic Worker (Processing & Strategy)
+    async def logic_worker():
+        nonlocal data_buffer, signal_buffer
+        while True:
+            message, recv_time = await msg_queue.get()
+            
+            # Offload JSON to Thread Pool
+            data = await loop.run_in_executor(parse_executor, json.loads, message)
+            
+            channel = data.get("channel")
+            if channel == "l2_data":
+                ws._handle_l2(data)
+            elif channel == "ticker":
+                ws._handle_ticker(data)
+
+            price = ws.get_mid_price()
+            if price > 0:
+                net_latency = 0.0
+                if channel == "ticker":
+                    events = data.get("events", [])
+                    if events and events[0].get("tickers"):
+                        ts_str = events[0]["tickers"][0].get("time")
+                        if ts_str:
+                            server_ts = datetime.fromisoformat(ts_str.replace('Z', '')).timestamp()
+                            net_latency = (time.time() - server_ts) * 1000
+
+                if tracker.prev_price > 0:
+                    pct = (price - tracker.prev_price) / tracker.prev_price
+                    tracker.capital += tracker.position * tracker.capital * pct
+                tracker.prev_price = price
+
+                # Push to Pipe Writer
+                packet_queue.put_nowait(struct.pack('ff', price, net_latency))
+                
+                proc_latency = (time.time() - recv_time) * 1000
+                data_buffer.append(f"{datetime.now().isoformat()},{price},{proc_latency:.3f}\n")
+            
+            msg_queue.task_done()
+
+    # 5b. Signal Reader (C++ -> Python)
     async def read_signals(stdout):
         nonlocal signal_buffer
         while True:
@@ -103,100 +151,45 @@ async def run_pipe(product_id="BTC-USD"):
                 if len(parts) >= 6:
                     state_obj = {
                         "time": datetime.now().isoformat(),
-                        "step": int(parts[1]),
-                        "price": float(parts[2]),
-                        "capital": tracker.capital,
-                        "magnetization": float(parts[3]),
-                        "position": tracker.position,
-                        "latency": float(parts[4]), # Phys
+                        "step": int(parts[1]), "price": float(parts[2]),
+                        "capital": tracker.capital, "magnetization": float(parts[3]),
+                        "position": tracker.position, "latency": float(parts[4]),
                         "net_latency": float(parts[5]),
                         "threshold": float(parts[6]) if len(parts) > 6 else 0.6
                     }
                     state_history.append(state_obj)
-                    if len(state_history) > 1000:
-                        state_history[:] = state_history[-500:]
+                    if len(state_history) > 1000: state_history[:] = state_history[-500:]
             else:
-                print(f"\n[DAEMON SIGNAL] {datetime.now().strftime('%H:%M:%S.%f')} | {decoded}")
+                print(f"[SIGNAL] {datetime.now().strftime('%H:%M:%S.%f')} | {decoded}")
                 parts = decoded.split()
                 if not parts: continue
-                
-                signal_type = parts[0]
                 old_pos = tracker.position
-                if signal_type == "BUY": tracker.position = 1.0
-                elif signal_type == "SELL": tracker.position = -1.0
-                elif signal_type.startswith("CLOSE"): tracker.position = 0.0
+                if parts[0] == "BUY": tracker.position = 1.0
+                elif parts[0] == "SELL": tracker.position = -1.0
+                elif parts[0].startswith("CLOSE"): tracker.position = 0.0
                 
                 if tracker.position != old_pos:
                     fee = abs(tracker.position - old_pos) * tracker.capital * tracker.fee_rate
                     tracker.capital -= fee
-
                 signal_buffer.append(f"{datetime.now().isoformat()},{decoded}\n")
 
     asyncio.create_task(read_signals(process.stdout))
     asyncio.create_task(background_maintenance())
+    asyncio.create_task(pipe_writer())
+    asyncio.create_task(logic_worker())
 
-    # 6. Optimized WS Loop (Threaded Parsing + Zero-Yield)
+    # 6. Optimized Network Listener
     import websockets
     async with websockets.connect(ws.WS_URL, max_size=None) as socket:
-        # Subscribe to both high-frequency book changes and trade tickers
-        subscribe_msg = {
-            "type": "subscribe",
-            "product_ids": [product_id],
-            "channel": "level2"
-        }
-        await socket.send(json.dumps(subscribe_msg))
-        
-        await socket.send(json.dumps({
-            "type": "subscribe", "product_ids": [product_id], "channel": "ticker"
-        }))
-        print("Subscribed to level2 & ticker. Restoring high-frequency pulse...")
+        await socket.send(json.dumps({"type": "subscribe", "product_ids": [product_id], "channel": "level2"}))
+        await socket.send(json.dumps({"type": "subscribe", "product_ids": [product_id], "channel": "ticker"}))
+        print("Network listener HOT. RESTING NO MORE.")
 
         try:
             while True:
-                # Direct await is safer and still yields to event loop for background tasks.
                 message = await socket.recv()
-                start_time = time.time()
-                    
-                # OPTIMIZATION: Threaded JSON Parsing
-                data = await loop.run_in_executor(parse_executor, json.loads, message)
-                
-                channel = data.get("channel")
-                if channel == "l2_data":
-                    ws._handle_l2(data)
-                elif channel == "ticker":
-                    ws._handle_ticker(data)
-
-                # Get Price (Fast path)
-                price = ws.get_mid_price()
-                
-                if price > 0:
-                    # Network Latency calculation
-                    net_latency = 0.0
-                    if channel == "ticker":
-                        events = data.get("events", [])
-                        if events and events[0].get("tickers"):
-                            server_time_str = events[0]["tickers"][0].get("time")
-                            if server_time_str:
-                                server_ts = datetime.fromisoformat(server_time_str.replace('Z', '')).timestamp()
-                                net_latency = (time.time() - server_ts) * 1000
-
-                    # Update Tracker PnL
-                    if tracker.prev_price > 0:
-                        pct_change = (price - tracker.prev_price) / tracker.prev_price
-                        tracker.capital += tracker.position * tracker.capital * pct_change
-                    tracker.prev_price = price
-
-                    # Write Binary Packet (Price + Latency)
-                    try:
-                        process.stdin.write(struct.pack('ff', price, net_latency))
-                        process.stdin.flush()
-                    except BrokenPipeError:
-                        break
-                        
-                    feed_latency = (time.time() - start_time) * 1000
-                    data_buffer.append(f"{datetime.now().isoformat()},{price},{feed_latency:.3f}\n")
-        except KeyboardInterrupt:
-            print("Stopping...")
+                msg_queue.put_nowait((message, time.time()))
+        except KeyboardInterrupt: pass
         finally:
             process.terminate()
             gc.enable()
