@@ -66,7 +66,9 @@ async def run_pipe(product_id="BTC-USD"):
         capital = 100.0
         position = 0.0
         prev_price = 0.0
+        entry_price = 0.0  # Track entry price for P&L calculation
         fee_rate = 0.001  # Binance: 0.1% taker (vs Coinbase 0.6%)
+        min_capture_pct = 0.3  # Minimum 0.3% capture to close position
 
     tracker = Tracker()
     state_history = []
@@ -309,23 +311,53 @@ async def run_pipe(product_id="BTC-USD"):
                                       f"Phys: {phys_lat:4.2f}ms | Read: {read_lat:4.2f}ms | "
                                       f"TOTAL: {total_latency:5.2f}ms{reset}")
 
-                    # Only append periodically to history to avoid memory bloat
-                    if int(parts[1]) % 100 == 0:
+                    # Append to history every 10 steps for responsive dashboard
+                    if int(parts[1]) % 10 == 0:
                         state_history.append(shared_state.copy())
                         if len(state_history) > 500: state_history[:] = state_history[-200:]
             else:
                 print(f"[SIGNAL] {datetime.now().strftime('%H:%M:%S.%f')} | {decoded}")
                 parts = decoded.split()
                 if not parts: continue
+
+                # Extract current price from signal (last part is usually price)
+                current_price = float(parts[-1]) if len(parts) > 1 else tracker.prev_price
+
                 old_pos = tracker.position
-                if parts[0] == "BUY": tracker.position = 1.0
-                elif parts[0] == "SELL": tracker.position = -1.0
-                elif parts[0].startswith("CLOSE"): tracker.position = 0.0
-                
-                if tracker.position != old_pos:
+                should_execute = True
+
+                # Entry signals: BUY or SELL
+                if parts[0] == "BUY":
+                    tracker.position = 1.0
+                    tracker.entry_price = current_price
+                elif parts[0] == "SELL":
+                    tracker.position = -1.0
+                    tracker.entry_price = current_price
+
+                # Exit signals: CLOSE_LONG or CLOSE_SHORT - check minimum capture
+                elif parts[0].startswith("CLOSE"):
+                    if tracker.entry_price > 0 and old_pos != 0:
+                        # Calculate capture %
+                        if old_pos > 0:  # Closing long
+                            capture_pct = ((current_price - tracker.entry_price) / tracker.entry_price) * 100
+                        else:  # Closing short
+                            capture_pct = ((tracker.entry_price - current_price) / tracker.entry_price) * 100
+
+                        # Only close if capture meets minimum threshold
+                        if abs(capture_pct) >= tracker.min_capture_pct:
+                            tracker.position = 0.0
+                            print(f"  ✅ CLOSE APPROVED: Capture {capture_pct:+.2f}% >= {tracker.min_capture_pct:.1f}% min")
+                        else:
+                            should_execute = False
+                            print(f"  ❌ CLOSE REJECTED: Capture {capture_pct:+.2f}% < {tracker.min_capture_pct:.1f}% min")
+                    else:
+                        tracker.position = 0.0  # Allow close if no entry price tracked
+
+                # Execute position change and deduct fees
+                if tracker.position != old_pos and should_execute:
                     fee = abs(tracker.position - old_pos) * tracker.capital * tracker.fee_rate
                     tracker.capital -= fee
-                signal_buffer.append(f"{time.time()},{decoded}\n")
+                    signal_buffer.append(f"{time.time()},{decoded},{current_price:.2f}\n")
 
     asyncio.create_task(read_signals(process.stdout))
     asyncio.create_task(background_maintenance())
