@@ -47,8 +47,8 @@ async def run_pipe(product_id="BTC-USD"):
     loop = asyncio.get_running_loop()
     
     # 1. Connect WS
-    from ..market.coinbase_ws import CoinbaseWebSocket
-    ws = CoinbaseWebSocket(product_id)
+    from ..market.binance_ws import BinanceWebSocket
+    ws = BinanceWebSocket(product_id)
     
     print(f"Starting C++ Daemon: {DAEMON_PATH}")
     
@@ -66,7 +66,7 @@ async def run_pipe(product_id="BTC-USD"):
         capital = 100.0
         position = 0.0
         prev_price = 0.0
-        fee_rate = 0.0005
+        fee_rate = 0.001  # Binance: 0.1% taker (vs Coinbase 0.6%)
 
     tracker = Tracker()
     state_history = []
@@ -136,11 +136,9 @@ async def run_pipe(product_id="BTC-USD"):
 
     import re
     # PRE-COMPILED REGEX for extreme speed
-    # Extracts first price from Level 2 update or Ticker
-    # Format: ..."price_level":"123.45"... or ..."price":"123.45"...
-    price_re = re.compile(r'"price(?:_level)?":"(\d+\.?\d*)"')
-    side_re = re.compile(r'"side":"(bid|ask)"')
-    size_re = re.compile(r'"new_quantity":"(\d+\.?\d*)"')
+    # Binance format: "p":"50000.00" (trade price), "E":1234567890 (timestamp ms)
+    price_re = re.compile(r'"p":"(\d+\.?\d*)"')
+    timestamp_re = re.compile(r'"E":(\d+)')
 
     # 5. Logic Worker (Processing & Strategy)
     async def logic_worker():
@@ -150,45 +148,54 @@ async def run_pipe(product_id="BTC-USD"):
             parse_start = time.perf_counter()
 
             # FAST PATH: String processing (websocket returns strings, not bytes)
-            is_l2 = '"channel":"l2_data"' in message
-            is_ticker = '"channel":"ticker"' in message
-            
+            # Binance uses "stream":"symbol@trade" and "stream":"symbol@depth"
+            is_trade = '@trade' in message
+            is_depth = '@depth' in message
+
             price = 0.0
             channel = "unknown"
             net_latency = 0.0
 
-            if is_ticker:
+            if is_trade:
                 # Optimized extraction for trade price (message is already a string)
                 price_match = price_re.search(message)
                 if price_match:
                     price = float(price_match.group(1))
                     ws.latest_ticker_price = price
                     ws.ready = True
-                    channel = "ticker"
+                    channel = "trade"
 
                     # Extract timestamp for network latency (fast path)
-                    time_idx = message.find('"time":"')
-                    if time_idx != -1:
-                        ts_str = message[time_idx+8:time_idx+34]
+                    # Binance format: "E":1234567890123 (milliseconds)
+                    ts_match = timestamp_re.search(message)
+                    if ts_match:
                         try:
-                            server_ts = datetime.fromisoformat(ts_str.replace('Z', '')).timestamp()
+                            server_ts_ms = int(ts_match.group(1))
+                            server_ts = server_ts_ms / 1000.0  # Convert to seconds
                             net_latency = (time.time() - server_ts) * 1000
                         except:
                             pass
                 # Skip fallback to JSON parsing - if regex fails, just skip this message
-            elif is_l2:
-                # Must update book to get accurate mid-price
-                # Decode and parse in thread pool
+            elif is_depth:
+                # Must parse full message to update book
                 data = await loop.run_in_executor(parse_executor, json.loads, message)
-                ws._handle_l2(data)
+                # Binance combined stream format: {"stream":"...","data":{...}}
+                if "data" in data:
+                    ws._handle_depth(data["data"])
                 price = ws.get_mid_price()
-                channel = "l2_data"
+                channel = "depth"
             else:
-                # Other messages (Snapshots, etc.)
+                # Other messages
                 data = await loop.run_in_executor(parse_executor, json.loads, message)
-                channel = data.get("channel", "unknown")
-                if channel == "l2_data": ws._handle_l2(data)
-                elif channel == "ticker": ws._handle_ticker(data)
+                if "stream" in data and "data" in data:
+                    stream_name = data["stream"]
+                    stream_data = data["data"]
+                    if "trade" in stream_name:
+                        ws._handle_trade(stream_data)
+                        channel = "trade"
+                    elif "depth" in stream_name:
+                        ws._handle_depth(stream_data)
+                        channel = "depth"
                 price = ws.get_mid_price()
 
             if price > 0:
@@ -327,11 +334,19 @@ async def run_pipe(product_id="BTC-USD"):
 
     # 6. Optimized Network Listener
     import websockets
-    async with websockets.connect(ws.WS_URL, max_size=None) as socket:
-        await socket.send(json.dumps({"type": "subscribe", "product_ids": [product_id], "channel": "level2"}))
-        await socket.send(json.dumps({"type": "subscribe", "product_ids": [product_id], "channel": "ticker"}))
-        print("Network listener HOT. RESTING NO MORE.")
-        print("\n📊 Latency Display Format:")
+    # Build Binance stream URL: symbol@depth + symbol@trade
+    symbol = product_id.replace("-", "").lower()
+    streams = f"{symbol}@depth20@100ms/{symbol}@trade"
+    binance_url = f"{ws.WS_URL}?streams={streams}"
+
+    async with websockets.connect(binance_url, max_size=None,
+                                   ping_interval=20, ping_timeout=10) as socket:
+        # Binance doesn't require subscription messages - streams are in URL
+        print("🔥 BINANCE Network Listener HOT - 12x Lower Fees!")
+        print(f"   Trading: {product_id}")
+        print(f"   Fees: 0.1% taker (vs Coinbase 0.6%)")
+        print(f"   Savings: 0.5% per trade = 5x more profit!\n")
+        print("📊 Latency Display Format:")
         print("   Net    = Network latency (exchange to you)")
         print("   Parse  = Python message parsing time")
         print("   Phys   = C++ physics computation time")
@@ -344,13 +359,14 @@ async def run_pipe(product_id="BTC-USD"):
                 message = await socket.recv()
 
                 # Try to extract server timestamp for network latency
+                # Binance format: "E":1234567890123 (milliseconds)
                 server_time = 0.0
-                if '"time":"' in message:
-                    time_idx = message.find('"time":"')
-                    if time_idx != -1:
-                        ts_str = message[time_idx+8:time_idx+34]
+                if '"E":' in message:
+                    ts_match = timestamp_re.search(message)
+                    if ts_match:
                         try:
-                            server_time = datetime.fromisoformat(ts_str.replace('Z', '')).timestamp()
+                            server_ts_ms = int(ts_match.group(1))
+                            server_time = server_ts_ms / 1000.0
                         except:
                             pass
 
