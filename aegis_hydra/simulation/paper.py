@@ -251,6 +251,7 @@ class PaperTrader:
                         "step": step,
                         "price": mid_price,
                         "capital": self.capital,
+                        "magnetization": magnetization,
                         "position": self.position,
                         "latency": true_latency
                     })
@@ -259,7 +260,8 @@ class PaperTrader:
                     with open("paper_log.csv", "a") as f:
                         f.write(f"{datetime.now().isoformat()},{step},{mid_price},{self.capital},{magnetization},{self.position},{true_latency}\n")
 
-                    if step % 50 == 0:
+                    # Dump State for Dashboard (More Frequent: Every 10 steps = ~2-3s)
+                    if step % 10 == 0:
                         import json
                         with open("paper_state.json", "w") as f:
                             json.dump(self.history[-1000:], f)
