@@ -75,11 +75,12 @@ int main(int argc, char *argv[]) {
       history_idx = (history_idx + 1) % history_size;
     }
 
-    // Calculate Dynamic Threshold
+    // Calculate Dynamic Threshold - ULTRA-HFT MODE
     double vol = calculate_volatility(mag_history);
-    double buy_thresh = 0.60 + (0.5 * vol);
-    double sell_thresh = -0.60 - (0.5 * vol);
-    double exit_thresh = 0.40;
+    // AGGRESSIVE: Lower base threshold for high-frequency trading
+    double buy_thresh = 0.35 + (0.1 * vol);   // Was: 0.60 + (0.5 * vol)
+    double sell_thresh = -0.35 - (0.1 * vol); // Was: -0.60 - (0.5 * vol)
+    double exit_thresh = 0.20;                 // Was: 0.40 (exit faster)
 
     // Heartbeat every 10 prices (High Frequency)
     if (total_steps % 10 == 0) {
