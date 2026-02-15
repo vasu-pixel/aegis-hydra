@@ -93,15 +93,15 @@ class OrderBook:
 
 class BinanceWebSocket:
     """
-    Real-time market data via Binance WebSocket.
+    Real-time market data via Binance US WebSocket.
 
-    Fees: 0.1% taker (vs Coinbase 0.6%) = 12x cheaper!
+    Fees: 0.1% taker (0.075% with BNB) - Legal in US!
 
     Uses:
     - Partial Depth Stream: btcusdt@depth20@100ms (snapshots every 100ms)
     - Trade Stream: btcusdt@trade (latest trade prices)
     """
-    WS_URL = "wss://stream.binance.com:9443/stream"
+    WS_URL = "wss://stream.binance.us:9443/stream"
 
     def __init__(self, product_id: str = "BTC-USDT"):
         # Convert to Binance format: BTC-USD -> btcusdt
