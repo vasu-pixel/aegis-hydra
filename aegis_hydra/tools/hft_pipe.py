@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 
 # Absolute Path to Daemon
-DAEMON_PATH = os.path.join(os.path.dirname(__file__), '../cpp/aegis_daemon')
+DAEMON_PATH = os.path.join(os.path.dirname(__file__), '../cpp/critical_flow_daemon')
 
 # Optimization: Global Thread Pools
 # parse_executor: for JSON parsing
@@ -234,9 +234,24 @@ async def run_pipe(product_id="BTC-USD"):
                 # Track parse time
                 parse_time = (time.perf_counter() - parse_start) * 1000
 
-                # Send to C++ daemon with timestamp for latency tracking
+                # Send to C++ daemon with order book data (5 levels)
                 pipe_send_time = time.perf_counter()
-                packet_queue.put_nowait(struct.pack('fff', price, net_latency, recv_time))
+
+                # Extract order book snapshot (5 levels of bid/ask)
+                bids, asks = ws.order_book.get_snapshot(depth=5)
+
+                # Build arrays for binary packet
+                bid_prices = [b[0] for b in bids[:5]]
+                bid_sizes = [b[1] for b in bids[:5]]
+                ask_prices = [a[0] for a in asks[:5]]
+                ask_sizes = [a[1] for a in asks[:5]]
+
+                # Pack: ffd (mid, net_lat, recv_time) + 20f (5 levels x 4 arrays)
+                packet = struct.pack('ffd20f',
+                    price, net_latency, recv_time,
+                    *bid_prices, *bid_sizes, *ask_prices, *ask_sizes)
+
+                packet_queue.put_nowait(packet)
 
                 # Store timing info for signal correlation
                 ws.last_packet_time = recv_time
@@ -254,8 +269,9 @@ async def run_pipe(product_id="BTC-USD"):
     # Optimization: Re-use state object to avoid garbage collection
     shared_state = {
         "time": "", "step": 0, "price": 0.0, "capital": 100.0,
-        "magnetization": 0.0, "position": 0.0, "latency": 0.0,
-        "net_latency": 0.0, "threshold": 0.6
+        "mlofi": 0.0, "criticality": 0.0, "volatility": 0.0,
+        "position": 0.0, "latency": 0.0,
+        "net_latency": 0.0, "threshold": 0.0
     }
 
     async def read_signals(stdout):
@@ -268,20 +284,24 @@ async def run_pipe(product_id="BTC-USD"):
 
             if decoded.startswith("STATE "):
                 parts = decoded.split()
-                if len(parts) >= 6:
+                if len(parts) >= 9:  # STATE step price mlofi cpp_lat net_lat criticality volatility threshold
                     shared_state["time"] = time.time()
                     shared_state["step"] = int(parts[1])
                     shared_state["price"] = float(parts[2])
                     shared_state["capital"] = tracker.capital
-                    shared_state["magnetization"] = float(parts[3])
+                    shared_state["mlofi"] = float(parts[3])  # Multi-Level Order Flow Imbalance
                     shared_state["position"] = tracker.position
 
                     # Parse latency components from C++ daemon
-                    physics_latency = float(parts[4])  # Phys time from C++
-                    net_latency_reported = float(parts[5])  # Net latency from ticker
+                    physics_latency = float(parts[4])  # C++ computation time
+                    net_latency_reported = float(parts[5])  # Network latency from ticker
                     shared_state["latency"] = physics_latency
                     shared_state["net_latency"] = net_latency_reported
-                    shared_state["threshold"] = float(parts[6]) if len(parts) > 6 else 0.6
+
+                    # New Critical Flow metrics
+                    shared_state["criticality"] = float(parts[6])  # Hawkes branching ratio (n)
+                    shared_state["volatility"] = float(parts[7])   # Price volatility (σ)
+                    shared_state["threshold"] = float(parts[8])    # Dynamic threshold
 
                     # Calculate full latency breakdown
                     if hasattr(ws, 'last_packet_time'):
