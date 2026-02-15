@@ -66,9 +66,13 @@ async def run_pipe(product_id="BTC-USD"):
         capital = 100.0
         position = 0.0
         prev_price = 0.0
-        entry_price = 0.0  # Track entry price for P&L calculation
-        fee_rate = 0.001  # Binance: 0.1% taker (vs Coinbase 0.6%)
-        min_capture_pct = 0.3  # Minimum 0.3% capture to close position
+        entry_price = 0.0      # Track entry price for P&L calculation
+        entry_time = 0.0       # Track entry time for minimum hold
+        fee_rate = 0.001       # Binance: 0.1% taker (vs Coinbase 0.6%)
+
+        # Safe trading parameters for low-fee environment
+        min_hold_seconds = 60  # Minimum 60s hold (prevents churn)
+        stop_loss_pct = -0.5   # Emergency exit at -0.5% loss (overrides min_hold)
 
     tracker = Tracker()
     state_history = []
@@ -325,38 +329,57 @@ async def run_pipe(product_id="BTC-USD"):
 
                 old_pos = tracker.position
                 should_execute = True
+                close_reason = ""
 
                 # Entry signals: BUY or SELL
                 if parts[0] == "BUY":
                     tracker.position = 1.0
                     tracker.entry_price = current_price
+                    tracker.entry_time = time.time()
+                    print(f"  📈 LONG ENTRY @ {current_price:.2f}")
+
                 elif parts[0] == "SELL":
                     tracker.position = -1.0
                     tracker.entry_price = current_price
+                    tracker.entry_time = time.time()
+                    print(f"  📉 SHORT ENTRY @ {current_price:.2f}")
 
-                # Exit signals: CLOSE_LONG or CLOSE_SHORT - check minimum capture
+                # Exit signals: CLOSE_LONG or CLOSE_SHORT
                 elif parts[0].startswith("CLOSE"):
                     if tracker.entry_price > 0 and old_pos != 0:
-                        # Calculate capture %
+                        # Calculate P&L %
                         if old_pos > 0:  # Closing long
-                            capture_pct = ((current_price - tracker.entry_price) / tracker.entry_price) * 100
+                            pnl_pct = ((current_price - tracker.entry_price) / tracker.entry_price) * 100
                         else:  # Closing short
-                            capture_pct = ((tracker.entry_price - current_price) / tracker.entry_price) * 100
+                            pnl_pct = ((tracker.entry_price - current_price) / tracker.entry_price) * 100
 
-                        # Only close if capture meets minimum threshold
-                        if abs(capture_pct) >= tracker.min_capture_pct:
+                        # Calculate hold time
+                        hold_time = time.time() - tracker.entry_time if tracker.entry_time > 0 else 999
+
+                        # STOP LOSS CHECK (overrides all other rules)
+                        if pnl_pct <= tracker.stop_loss_pct:
                             tracker.position = 0.0
-                            print(f"  ✅ CLOSE APPROVED: Capture {capture_pct:+.2f}% >= {tracker.min_capture_pct:.1f}% min")
-                        else:
+                            close_reason = f"🛑 STOP LOSS: {pnl_pct:+.2f}% (held {hold_time:.1f}s)"
+
+                        # MINIMUM HOLD CHECK (prevents churn)
+                        elif hold_time < tracker.min_hold_seconds:
                             should_execute = False
-                            print(f"  ❌ CLOSE REJECTED: Capture {capture_pct:+.2f}% < {tracker.min_capture_pct:.1f}% min")
+                            close_reason = f"⏱️  HOLD REQUIRED: {hold_time:.1f}s < {tracker.min_hold_seconds}s min (P&L: {pnl_pct:+.2f}%)"
+
+                        # NORMAL EXIT (held long enough, close regardless of P&L)
+                        else:
+                            tracker.position = 0.0
+                            close_reason = f"✅ CLOSE: {pnl_pct:+.2f}% after {hold_time:.1f}s"
+
+                        print(f"  {close_reason}")
                     else:
-                        tracker.position = 0.0  # Allow close if no entry price tracked
+                        tracker.position = 0.0  # Allow close if no entry tracked
 
                 # Execute position change and deduct fees
                 if tracker.position != old_pos and should_execute:
                     fee = abs(tracker.position - old_pos) * tracker.capital * tracker.fee_rate
                     tracker.capital -= fee
+                    print(f"  💸 Fee: ${fee:.4f} (Capital: ${tracker.capital:.2f})")
                     signal_buffer.append(f"{time.time()},{decoded},{current_price:.2f}\n")
 
     asyncio.create_task(read_signals(process.stdout))
