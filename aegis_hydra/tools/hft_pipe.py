@@ -34,17 +34,44 @@ async def run_pipe(product_id="BTC-USD"):
     print("Python (WS) -> [Binary Float] -> C++ (Engine)")
     
     # 3. Non-blocking Signal Reader
+    state_history = []
     async def read_signals(stdout):
         while True:
             line = await loop.run_in_executor(None, stdout.readline)
             if not line: break
             decoded = line.decode().strip()
-            print(f"\n[DAEMON SIGNAL] {datetime.now().strftime('%H:%M:%S.%f')} | {decoded}")
-            # Append signal to a local log
-            with open("hft_signals.csv", "a") as f:
-                f.write(f"{datetime.now().isoformat()},{decoded}\n")
+            
+            if decoded.startswith("STATE "):
+                # Parse STATE <step> <price> <mag> <latency>
+                parts = decoded.split()
+                if len(parts) >= 5:
+                    step_val = int(parts[1])
+                    price_val = float(parts[2])
+                    mag_val = float(parts[3])
+                    lat_val = float(parts[4])
+                    
+                    state_obj = {
+                        "time": datetime.now().isoformat(),
+                        "step": step_val,
+                        "price": price_val,
+                        "capital": 10000.0, # Placeholder or keep track?
+                        "magnetization": mag_val,
+                        "position": 0.0, # Placeholder
+                        "latency": lat_val
+                    }
+                    state_history.append(state_obj)
+                    
+                    # Update paper_state.json every update for the dashboard
+                    with open("paper_state.json", "w") as f:
+                        json.dump(state_history[-1000:], f)
+            else:
+                print(f"\n[DAEMON SIGNAL] {datetime.now().strftime('%H:%M:%S.%f')} | {decoded}")
+                # Append signal to a local log
+                with open("hft_signals.csv", "a") as f:
+                    f.write(f"{datetime.now().isoformat()},{decoded}\n")
 
     loop = asyncio.get_event_loop()
+    import json
     asyncio.create_task(read_signals(process.stdout))
 
     # 4. Data Storage Buffer
@@ -54,6 +81,7 @@ async def run_pipe(product_id="BTC-USD"):
     try:
         while True:
             # 3. Get Price (Fastest Path)
+            loop_start = time.time()
             price, bids, asks = ws.get_data()
             
             if price > 0:
@@ -64,9 +92,11 @@ async def run_pipe(product_id="BTC-USD"):
                 except BrokenPipeError:
                     print("Daemon Died!")
                     break
+                
+                feed_latency = (time.time() - loop_start) * 1000
                     
                 # Store data (Buffered)
-                data_buffer.append(f"{datetime.now().isoformat()},{price}\n")
+                data_buffer.append(f"{datetime.now().isoformat()},{price},{feed_latency:.3f}\n")
                 if len(data_buffer) >= 100:
                     with open(log_file, "a") as f:
                         f.writelines(data_buffer)
