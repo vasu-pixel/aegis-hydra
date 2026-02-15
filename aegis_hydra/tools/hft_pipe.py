@@ -89,6 +89,9 @@ async def run_pipe(product_id="BTC-USD"):
     msg_queue = asyncio.Queue(maxsize=5000)
     packet_queue = asyncio.Queue(maxsize=5000)
 
+    # Trade counting for Hawkes estimator
+    trade_count_per_tick = 0
+
     # Latency tracking
     latency_buffer = []
     latency_stats = {
@@ -169,7 +172,7 @@ async def run_pipe(product_id="BTC-USD"):
 
     # 5. Logic Worker (Processing & Strategy)
     async def logic_worker():
-        nonlocal data_buffer, signal_buffer, latency_buffer
+        nonlocal data_buffer, signal_buffer, latency_buffer, trade_count_per_tick
         while True:
             message, recv_time, server_time = await msg_queue.get()
             parse_start = time.perf_counter()
@@ -184,6 +187,9 @@ async def run_pipe(product_id="BTC-USD"):
             net_latency = 0.0
 
             if is_trade:
+                # Count this trade for Hawkes estimator
+                trade_count_per_tick += 1
+
                 # Optimized extraction for trade price (message is already a string)
                 price_match = price_re.search(message)
                 if price_match:
@@ -246,12 +252,15 @@ async def run_pipe(product_id="BTC-USD"):
                 ask_prices = [a[0] for a in asks[:5]]
                 ask_sizes = [a[1] for a in asks[:5]]
 
-                # Pack: ffd (mid, net_lat, recv_time) + 20f (5 levels x 4 arrays)
-                packet = struct.pack('ffd20f',
-                    price, net_latency, recv_time,
+                # Pack: ffd (mid, net_lat, recv_time) + I (trade_count) + 20f (5 levels x 4 arrays)
+                packet = struct.pack('ffdI20f',
+                    price, net_latency, recv_time, trade_count_per_tick,
                     *bid_prices, *bid_sizes, *ask_prices, *ask_sizes)
 
                 packet_queue.put_nowait(packet)
+
+                # Reset trade count for next tick
+                trade_count_per_tick = 0
 
                 # Store timing info for signal correlation
                 ws.last_packet_time = recv_time

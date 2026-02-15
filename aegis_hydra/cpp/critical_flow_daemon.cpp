@@ -9,6 +9,7 @@ struct InputPacket {
     float mid_price;
     float net_latency;
     double recv_time;
+    uint32_t trade_count;  // Number of trades since last tick
 
     // Order book levels (5 levels of bid/ask)
     float bid_prices[5];
@@ -36,6 +37,11 @@ int main() {
         // Update order book
         book.update_snapshot(packet.bid_prices, packet.bid_sizes,
                             packet.ask_prices, packet.ask_sizes, 5);
+
+        // Record trades for Hawkes estimator
+        for (uint32_t i = 0; i < packet.trade_count; ++i) {
+            strategy.record_trade();
+        }
 
         // Update strategy with new price
         strategy.update_price(packet.mid_price, packet.recv_time);
