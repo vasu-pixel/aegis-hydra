@@ -42,10 +42,15 @@ public:
     void update_price(float mid_price, double timestamp) {
         if (prev_mid_price > 0.0f) {
             float price_change = (mid_price - prev_mid_price) / prev_mid_price;
-            price_changes.push_back(price_change);
 
-            if (price_changes.size() > VOL_WINDOW) {
-                price_changes.pop_front();
+            // Sanity check: reject extreme price changes (> 10%)
+            // This filters corrupted data
+            if (std::abs(price_change) < 0.1f) {
+                price_changes.push_back(price_change);
+
+                if (price_changes.size() > VOL_WINDOW) {
+                    price_changes.pop_front();
+                }
             }
         }
         prev_mid_price = mid_price;
@@ -79,7 +84,18 @@ public:
         }
         float variance = sq_sum / price_changes.size();
 
-        return std::sqrt(variance);
+        // Safety: prevent NaN/inf
+        if (variance < 0.0f || !std::isfinite(variance)) {
+            return 0.0001f;
+        }
+
+        float vol = std::sqrt(variance);
+
+        // Clamp to reasonable range (0.01% to 10% volatility)
+        if (!std::isfinite(vol) || vol < 0.0001f) return 0.0001f;
+        if (vol > 0.1f) return 0.1f;
+
+        return vol;
     }
 
     // Calculate dynamic threshold

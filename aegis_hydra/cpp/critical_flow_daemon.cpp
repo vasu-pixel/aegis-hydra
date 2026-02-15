@@ -5,7 +5,8 @@
 #include <cstring>
 
 // Binary packet from Python
-struct InputPacket {
+// Use packed attribute to match Python struct packing exactly
+struct __attribute__((packed)) InputPacket {
     float mid_price;
     float net_latency;
     double recv_time;
@@ -33,6 +34,12 @@ int main() {
     // Read binary packets from stdin
     while (std::cin.read(reinterpret_cast<char*>(&packet), sizeof(packet))) {
         auto start = std::chrono::high_resolution_clock::now();
+
+        // Validate price (BTC should be between 1,000 and 200,000)
+        if (packet.mid_price < 1000.0f || packet.mid_price > 200000.0f) {
+            std::cerr << "\n⚠️  Bad price: " << packet.mid_price << " - skipping tick" << std::endl;
+            continue;  // Skip this tick
+        }
 
         // Update order book
         book.update_snapshot(packet.bid_prices, packet.bid_sizes,
