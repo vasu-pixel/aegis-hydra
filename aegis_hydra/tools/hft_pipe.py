@@ -251,42 +251,56 @@ async def run_pipe(product_id="BTC-USD"):
 
                     # Calculate full latency breakdown
                     if hasattr(ws, 'last_packet_time'):
-                        signal_read_latency = (signal_recv_time - ws.last_packet_time) * 1000
+                        # Total latency from when we received data to now
                         total_latency = (signal_recv_time - ws.last_packet_time) * 1000
 
                         # Detailed breakdown
                         net_lat = ws.last_net_latency if hasattr(ws, 'last_net_latency') else 0.0
                         parse_lat = ws.last_parse_time if hasattr(ws, 'last_parse_time') else 0.0
                         phys_lat = physics_latency
-                        read_lat = signal_read_latency - phys_lat - parse_lat
 
-                        # Store for stats
-                        latency_stats['network'].append(net_lat)
-                        latency_stats['parse'].append(parse_lat)
-                        latency_stats['physics'].append(phys_lat)
-                        latency_stats['signal_read'].append(max(0, read_lat))
-                        latency_stats['total'].append(total_latency)
+                        # Signal read latency = total - parse - physics
+                        # (Network is separate, already measured)
+                        read_lat = max(0.0, total_latency - parse_lat - phys_lat)
 
-                        # Log detailed breakdown
-                        latency_buffer.append(
-                            f"{time.time()},{net_lat:.3f},{parse_lat:.3f},"
-                            f"{phys_lat:.3f},{max(0, read_lat):.3f},{total_latency:.3f}\n"
-                        )
+                        # Store for stats (only valid positive values)
+                        if net_lat >= 0:
+                            latency_stats['network'].append(net_lat)
+                        if parse_lat >= 0:
+                            latency_stats['parse'].append(parse_lat)
+                        if phys_lat >= 0:
+                            latency_stats['physics'].append(phys_lat)
+                        if read_lat >= 0:
+                            latency_stats['signal_read'].append(read_lat)
+                        if total_latency >= 0:
+                            latency_stats['total'].append(total_latency)
 
-                        # Print every 10 steps with color-coded warnings
-                        if int(parts[1]) % 10 == 0:
-                            color = ""
-                            reset = ""
-                            if total_latency > 5.0:
-                                color = "\033[91m"  # Red
-                                reset = "\033[0m"
-                            elif total_latency > 2.0:
-                                color = "\033[93m"  # Yellow
-                                reset = "\033[0m"
+                        # Log detailed breakdown (only if valid)
+                        if total_latency >= 0 and phys_lat >= 0:
+                            latency_buffer.append(
+                                f"{time.time()},{net_lat:.3f},{parse_lat:.3f},"
+                                f"{phys_lat:.3f},{read_lat:.3f},{total_latency:.3f}\n"
+                            )
 
-                            print(f"{color}[LATENCY] Net: {net_lat:5.2f}ms | Parse: {parse_lat:4.2f}ms | "
-                                  f"Phys: {phys_lat:4.2f}ms | Read: {max(0, read_lat):4.2f}ms | "
-                                  f"TOTAL: {total_latency:5.2f}ms{reset}")
+                            # Print every 10 steps with color-coded warnings
+                            if int(parts[1]) % 10 == 0:
+                                color = ""
+                                reset = ""
+
+                                # Color based on physics latency (most important)
+                                if phys_lat > 5.0:
+                                    color = "\033[91m"  # Red
+                                    reset = "\033[0m"
+                                elif phys_lat > 1.0:
+                                    color = "\033[93m"  # Yellow
+                                    reset = "\033[0m"
+                                else:
+                                    color = "\033[92m"  # Green
+                                    reset = "\033[0m"
+
+                                print(f"{color}[LATENCY] Net: {net_lat:5.2f}ms | Parse: {parse_lat:4.2f}ms | "
+                                      f"Phys: {phys_lat:4.2f}ms | Read: {read_lat:4.2f}ms | "
+                                      f"TOTAL: {total_latency:5.2f}ms{reset}")
 
                     # Only append periodically to history to avoid memory bloat
                     if int(parts[1]) % 100 == 0:
