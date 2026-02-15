@@ -243,27 +243,6 @@ class Backtester:
 
             prev_price = mid
             pnl_curve.append(capital)
-            
-            continue # Skip the old logic block
-            
-            # ... [Old logic block to be deleted/bypassed] ...
-
-            mid = float(tensor.mid_price)
-            price_curve.append(mid)
-            if prev_price is not None and abs(action) > 0.1:
-                price_change = (mid - prev_price) / (prev_price + 1e-10)
-                # size is already a fraction of capital, so PnL = size * capital * return
-                position_value = size * capital
-                pnl = action * position_value * price_change
-                capital += pnl
-                trades += 1
-                if pnl > 0:
-                    wins += 1
-                # Track return as % of capital BEFORE the trade
-                self.risk_guard.add_return(pnl / max(capital - pnl, 1e-10))
-
-            prev_price = mid
-            pnl_curve.append(capital)
 
         # Compute summary stats
         pnl_arr = np.array(pnl_curve)

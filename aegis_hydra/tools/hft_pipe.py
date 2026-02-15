@@ -78,9 +78,16 @@ async def run_pipe(product_id="BTC-USD"):
     msg_queue = asyncio.Queue(maxsize=5000)
     packet_queue = asyncio.Queue(maxsize=5000)
 
+    # Latency tracking
+    latency_buffer = []
+    latency_stats = {
+        'network': [], 'parse': [], 'physics': [],
+        'signal_read': [], 'total': []
+    }
+
     # 4. Background Tasks
     async def background_maintenance():
-        nonlocal data_buffer, signal_buffer
+        nonlocal data_buffer, signal_buffer, latency_buffer, latency_stats
         while True:
             await asyncio.sleep(0.5)
             if state_history:
@@ -93,6 +100,25 @@ async def run_pipe(product_id="BTC-USD"):
                 sigs = signal_buffer[:]
                 signal_buffer = []
                 loop.run_in_executor(io_executor, log_csv_sync, "hft_signals.csv", sigs)
+            if latency_buffer:
+                lat_lines = latency_buffer[:]
+                latency_buffer = []
+                loop.run_in_executor(io_executor, log_csv_sync, "hft_latency_breakdown.csv", lat_lines)
+
+            # Print latency stats every 500ms
+            if latency_stats['total']:
+                import statistics
+                print(f"\n📊 Latency Stats (last 500ms):")
+                print(f"   Network:  {statistics.mean(latency_stats['network']):.2f}ms avg")
+                print(f"   Parse:    {statistics.mean(latency_stats['parse']):.2f}ms avg")
+                print(f"   Physics:  {statistics.mean(latency_stats['physics']):.2f}ms avg")
+                print(f"   SigRead:  {statistics.mean(latency_stats['signal_read']):.2f}ms avg")
+                print(f"   TOTAL:    {statistics.mean(latency_stats['total']):.2f}ms avg")
+
+                # Clear stats for next interval
+                for key in latency_stats:
+                    latency_stats[key] = []
+
             # REMOVED: gc.collect(0) - causes 3-8ms spikes, defeats gc.disable()
             # gc.collect(0)
 
@@ -103,7 +129,9 @@ async def run_pipe(product_id="BTC-USD"):
             try:
                 process.stdin.write(packet)
                 process.stdin.flush()
-            except BrokenPipeError: break
+            except BrokenPipeError:
+                print("\n⚠️  C++ daemon pipe broken!")
+                break
             packet_queue.task_done()
 
     import re
@@ -116,9 +144,10 @@ async def run_pipe(product_id="BTC-USD"):
 
     # 5. Logic Worker (Processing & Strategy)
     async def logic_worker():
-        nonlocal data_buffer, signal_buffer
+        nonlocal data_buffer, signal_buffer, latency_buffer
         while True:
-            message, recv_time = await msg_queue.get()
+            message, recv_time, server_time = await msg_queue.get()
+            parse_start = time.perf_counter()
 
             # FAST PATH: String processing (websocket returns strings, not bytes)
             is_l2 = '"channel":"l2_data"' in message
@@ -168,12 +197,23 @@ async def run_pipe(product_id="BTC-USD"):
                     tracker.capital += tracker.position * tracker.capital * pct
                 tracker.prev_price = price
 
-                packet_queue.put_nowait(struct.pack('ff', price, net_latency))
-                
+                # Track parse time
+                parse_time = (time.perf_counter() - parse_start) * 1000
+
+                # Send to C++ daemon with timestamp for latency tracking
+                pipe_send_time = time.perf_counter()
+                packet_queue.put_nowait(struct.pack('fff', price, net_latency, recv_time))
+
+                # Store timing info for signal correlation
+                ws.last_packet_time = recv_time
+                ws.last_server_time = server_time
+                ws.last_parse_time = parse_time
+                ws.last_net_latency = net_latency
+
                 # Zero-allocation logging (just float/timestamp)
-                proc_latency = (time.time() - recv_time) * 1000
+                proc_latency = (time.perf_counter() - parse_start) * 1000
                 data_buffer.append(f"{time.time()},{price},{proc_latency:.3f}\n")
-            
+
             msg_queue.task_done()
 
     # 5b. Signal Reader (C++ -> Python)
@@ -185,12 +225,13 @@ async def run_pipe(product_id="BTC-USD"):
     }
 
     async def read_signals(stdout):
-        nonlocal signal_buffer, shared_state
+        nonlocal signal_buffer, shared_state, latency_buffer, latency_stats
         while True:
+            signal_recv_time = time.perf_counter()
             line = await loop.run_in_executor(None, stdout.readline)
             if not line: break
             decoded = line.decode().strip()
-            
+
             if decoded.startswith("STATE "):
                 parts = decoded.split()
                 if len(parts) >= 6:
@@ -200,10 +241,53 @@ async def run_pipe(product_id="BTC-USD"):
                     shared_state["capital"] = tracker.capital
                     shared_state["magnetization"] = float(parts[3])
                     shared_state["position"] = tracker.position
-                    shared_state["latency"] = float(parts[4])
-                    shared_state["net_latency"] = float(parts[5])
+
+                    # Parse latency components from C++ daemon
+                    physics_latency = float(parts[4])  # Phys time from C++
+                    net_latency_reported = float(parts[5])  # Net latency from ticker
+                    shared_state["latency"] = physics_latency
+                    shared_state["net_latency"] = net_latency_reported
                     shared_state["threshold"] = float(parts[6]) if len(parts) > 6 else 0.6
-                    
+
+                    # Calculate full latency breakdown
+                    if hasattr(ws, 'last_packet_time'):
+                        signal_read_latency = (signal_recv_time - ws.last_packet_time) * 1000
+                        total_latency = (signal_recv_time - ws.last_packet_time) * 1000
+
+                        # Detailed breakdown
+                        net_lat = ws.last_net_latency if hasattr(ws, 'last_net_latency') else 0.0
+                        parse_lat = ws.last_parse_time if hasattr(ws, 'last_parse_time') else 0.0
+                        phys_lat = physics_latency
+                        read_lat = signal_read_latency - phys_lat - parse_lat
+
+                        # Store for stats
+                        latency_stats['network'].append(net_lat)
+                        latency_stats['parse'].append(parse_lat)
+                        latency_stats['physics'].append(phys_lat)
+                        latency_stats['signal_read'].append(max(0, read_lat))
+                        latency_stats['total'].append(total_latency)
+
+                        # Log detailed breakdown
+                        latency_buffer.append(
+                            f"{time.time()},{net_lat:.3f},{parse_lat:.3f},"
+                            f"{phys_lat:.3f},{max(0, read_lat):.3f},{total_latency:.3f}\n"
+                        )
+
+                        # Print every 10 steps with color-coded warnings
+                        if int(parts[1]) % 10 == 0:
+                            color = ""
+                            reset = ""
+                            if total_latency > 5.0:
+                                color = "\033[91m"  # Red
+                                reset = "\033[0m"
+                            elif total_latency > 2.0:
+                                color = "\033[93m"  # Yellow
+                                reset = "\033[0m"
+
+                            print(f"{color}[LATENCY] Net: {net_lat:5.2f}ms | Parse: {parse_lat:4.2f}ms | "
+                                  f"Phys: {phys_lat:4.2f}ms | Read: {max(0, read_lat):4.2f}ms | "
+                                  f"TOTAL: {total_latency:5.2f}ms{reset}")
+
                     # Only append periodically to history to avoid memory bloat
                     if int(parts[1]) % 100 == 0:
                         state_history.append(shared_state.copy())
@@ -233,15 +317,40 @@ async def run_pipe(product_id="BTC-USD"):
         await socket.send(json.dumps({"type": "subscribe", "product_ids": [product_id], "channel": "level2"}))
         await socket.send(json.dumps({"type": "subscribe", "product_ids": [product_id], "channel": "ticker"}))
         print("Network listener HOT. RESTING NO MORE.")
+        print("\n📊 Latency Display Format:")
+        print("   Net    = Network latency (exchange to you)")
+        print("   Parse  = Python message parsing time")
+        print("   Phys   = C++ physics computation time")
+        print("   Read   = Signal read from C++ to Python")
+        print("   TOTAL  = End-to-end processing time\n")
 
         try:
             while True:
+                recv_time = time.time()
                 message = await socket.recv()
-                msg_queue.put_nowait((message, time.time()))
+
+                # Try to extract server timestamp for network latency
+                server_time = 0.0
+                if '"time":"' in message:
+                    time_idx = message.find('"time":"')
+                    if time_idx != -1:
+                        ts_str = message[time_idx+8:time_idx+34]
+                        try:
+                            server_time = datetime.fromisoformat(ts_str.replace('Z', '')).timestamp()
+                        except:
+                            pass
+
+                msg_queue.put_nowait((message, recv_time, server_time))
         except KeyboardInterrupt: pass
         finally:
             process.terminate()
             gc.enable()
+
+            # Final stats summary
+            print("\n\n📊 SESSION LATENCY SUMMARY:")
+            if latency_buffer:
+                print("   Detailed breakdown saved to: hft_latency_breakdown.csv")
+            print("   Exiting...")
 
 if __name__ == "__main__":
     sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))

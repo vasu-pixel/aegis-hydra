@@ -43,19 +43,21 @@ int main(int argc, char *argv[]) {
   Engine_start(size, size, seed);
   Engine_update_params(T, J, 0.0f);
 
-  // Buffer for input
+  // Buffer for input (updated to include recv_time for tracking)
   struct {
     float price;
-    float latency;
+    float net_latency;
+    float recv_time;  // Unix timestamp when Python received message
   } packet;
 
   float last_mag = 0.0f;
   long total_steps = 0;
 
-  // Read binary packet (Price + Latency)
+  // Read binary packet (Price + Net Latency + Recv Time)
   while (std::cin.read(reinterpret_cast<char *>(&packet), sizeof(packet))) {
     float price_in = packet.price;
-    float lat_in = packet.latency;
+    float net_lat_in = packet.net_latency;
+    float recv_time = packet.recv_time;
 
     // 1. Update Engine
     Engine_update_market(price_in);
@@ -86,18 +88,18 @@ int main(int argc, char *argv[]) {
                 << " | Phys: " << phys_latency << "ms " << std::flush;
 
       std::cout << "STATE " << total_steps << " " << price_in << " " << mag
-                << " " << phys_latency << " " << lat_in << " " << buy_thresh
+                << " " << phys_latency << " " << net_lat_in << " " << buy_thresh
                 << std::endl;
     }
     total_steps++;
 
     // 3. HFT Logic with RiskGuard & Dynamic Thresholds
     if (mag > (float)buy_thresh && last_mag <= (float)buy_thresh) {
-      if (risk_guard.can_trade(lat_in)) {
+      if (risk_guard.can_trade(net_lat_in)) {
         std::cout << "BUY " << price_in << std::endl;
       }
     } else if (mag < (float)sell_thresh && last_mag >= (float)sell_thresh) {
-      if (risk_guard.can_trade(lat_in)) {
+      if (risk_guard.can_trade(net_lat_in)) {
         std::cout << "SELL " << price_in << std::endl;
       }
     } else if (mag < (float)exit_thresh && last_mag >= (float)exit_thresh &&
