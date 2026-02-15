@@ -21,7 +21,7 @@ private:
   // Bucketing for Variance Calculation
   double current_bucket_sum = 0.0;
   double current_bucket_start = 0.0;
-  double bucket_size = 0.1; // 100ms buckets
+  double bucket_size = 1.0; // 1 second buckets (maximize variance)
 
   double window_duration = 10.0; // 10 seconds (HFT scale)
   double ewma_alpha = 0.2;       // Smoothing factor
@@ -58,10 +58,10 @@ public:
     }
   }
 
-  // Moment-Based Estimator: n = (Var - Mean) / Var
-  // Measures clustering (excess variance) relative to random Poisson (Var=Mean)
+  // Ratio-Based Estimator: n = 1 - (Mean / Variance)
+  // Works better for slightly under-dispersed data
   float calculate_criticality() const {
-    if (trade_counts.size() < 10) {
+    if (trade_counts.size() < 5) {
       return 0.0f; // Not enough data
     }
 
@@ -83,7 +83,7 @@ public:
 
     // DEBUG: Print internal stats occasionally
     static int debug_counter = 0;
-    if (debug_counter++ % 50 == 0) {
+    if (debug_counter++ % 10 == 0) { // Print more often (every 10s)
       std::cerr << "[HAWKES DEBUG] Mean: " << mean << " | Var: " << variance
                 << " | Count: " << trade_counts.size() << " | Window: "
                 << (timestamps.empty()
@@ -102,16 +102,13 @@ public:
       return 0.0f; // No variance
     }
 
-    // Moment-Based Estimator
+    // Ratio-Based Estimator
     // If Var > Mean, it's clustered (n > 0).
-    // If Var <= Mean, it's random or regular (n = 0).
+    // n = 1 - (Mean / Variance)
     float n = 0.0f;
     if (variance > mean) {
-      n = (float)((variance - mean) / variance);
+      n = 1.0f - (float)(mean / variance);
     }
-
-    // HFT adjustment: Amplify weak signals slightly
-    n = std::pow(n, 0.8f);
 
     // Clamp to valid range
     if (n < MIN_CRITICALITY)
