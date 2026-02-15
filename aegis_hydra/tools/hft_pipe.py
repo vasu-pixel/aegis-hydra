@@ -45,6 +45,20 @@ async def run_pipe(product_id="BTC-USD"):
     print("Python (WS) -> [Binary Float] -> C++ (Engine)")
     
     # 4. Non-blocking Signal Reader
+    state_history = []
+    
+    async def sync_dashboard():
+        """Periodic background task to update paper_state.json without blocking trading."""
+        while True:
+            await asyncio.sleep(0.5) # Update every 500ms
+            if state_history:
+                try:
+                    # Write only the last 1000 points to keep it fast
+                    with open("paper_state.json", "w") as f:
+                        json.dump(state_history[-1000:], f)
+                except Exception as e:
+                    print(f"Dashboard Sync Error: {e}")
+
     async def read_signals(stdout):
         while True:
             line = await loop.run_in_executor(None, stdout.readline)
@@ -70,10 +84,9 @@ async def run_pipe(product_id="BTC-USD"):
                         "latency": lat_val
                     }
                     state_history.append(state_obj)
-                    
-                    # Update paper_state.json every update for the dashboard
-                    with open("paper_state.json", "w") as f:
-                        json.dump(state_history[-1000:], f)
+                    # Cap memory usage
+                    if len(state_history) > 2000:
+                        state_history[:] = state_history[-1000:]
             else:
                 print(f"\n[DAEMON SIGNAL] {datetime.now().strftime('%H:%M:%S.%f')} | {decoded}")
                 
@@ -104,6 +117,7 @@ async def run_pipe(product_id="BTC-USD"):
     loop = asyncio.get_event_loop()
     import json
     asyncio.create_task(read_signals(process.stdout))
+    asyncio.create_task(sync_dashboard())
 
     # 5. Data Storage Buffer
     data_buffer = []
