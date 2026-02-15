@@ -100,4 +100,13 @@ float Engine_get_magnetization() {
 }
 
 long Engine_get_steps() { return engine.steps.load(std::memory_order_relaxed); }
+
+// Phase 15: Run Dedicated Feed Loop (Blocks Thread)
+// Reads binary float stream from STDIN (piped)
+void Engine_run_feed_loop() {
+  float price_in;
+  while (std::cin.read(reinterpret_cast<char *>(&price_in), sizeof(float))) {
+    engine.current_price.store(price_in, std::memory_order_relaxed);
+  }
+}
 }
