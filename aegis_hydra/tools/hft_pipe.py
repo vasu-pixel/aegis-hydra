@@ -120,18 +120,17 @@ async def run_pipe(product_id="BTC-USD"):
         while True:
             message, recv_time = await msg_queue.get()
 
-            # FAST PATH: Byte string processing (Zero-copy, zero allocation)
-            is_l2 = b'"channel":"l2_data"' in message
-            is_ticker = b'"channel":"ticker"' in message
+            # FAST PATH: String processing (websocket returns strings, not bytes)
+            is_l2 = '"channel":"l2_data"' in message
+            is_ticker = '"channel":"ticker"' in message
             
             price = 0.0
             channel = "unknown"
             net_latency = 0.0
 
             if is_ticker:
-                # Optimized extraction for trade price (decode once)
-                msg_str = message.decode('utf-8', errors='ignore')
-                price_match = price_re.search(msg_str)
+                # Optimized extraction for trade price (message is already a string)
+                price_match = price_re.search(message)
                 if price_match:
                     price = float(price_match.group(1))
                     ws.latest_ticker_price = price
@@ -139,9 +138,9 @@ async def run_pipe(product_id="BTC-USD"):
                     channel = "ticker"
 
                     # Extract timestamp for network latency (fast path)
-                    time_idx = msg_str.find('"time":"')
+                    time_idx = message.find('"time":"')
                     if time_idx != -1:
-                        ts_str = msg_str[time_idx+8:time_idx+34]
+                        ts_str = message[time_idx+8:time_idx+34]
                         try:
                             server_ts = datetime.fromisoformat(ts_str.replace('Z', '')).timestamp()
                             net_latency = (time.time() - server_ts) * 1000
