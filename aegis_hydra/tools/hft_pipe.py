@@ -114,18 +114,17 @@ async def run_pipe(product_id="BTC-USD"):
             message, recv_time = await msg_queue.get()
             
             # FAST PATH: String processing (Zero JSON Allocation)
-            # Only use json.loads for snapshots or if fast-path fails
-            is_l2 = b'"channel":"l2_data"' in message
-            is_ticker = b'"channel":"ticker"' in message
-            is_update = b'"type":"update"' in message
+            # websocket.recv() returns str for text frames
+            is_l2 = '"channel":"l2_data"' in message
+            is_ticker = '"channel":"ticker"' in message
+            is_update = '"type":"update"' in message
             
             price = 0.0
             channel = "unknown"
             
             if (is_l2 and is_update) or is_ticker:
                 # Optimized extraction
-                msg_str = message.decode('utf-8')
-                price_match = price_re.search(msg_str)
+                price_match = price_re.search(message)
                 if price_match:
                     price = float(price_match.group(1))
                     channel = "l2_data" if is_l2 else "ticker"
@@ -133,12 +132,7 @@ async def run_pipe(product_id="BTC-USD"):
                     # Update internal state lightly
                     if is_ticker:
                         ws.latest_ticker_price = price
-                        ws.ready = True # Ensure we can trade
-                    else:
-                        # For L2 updates, we should ideally update the book,
-                        # but if we just want the latest mid, ticker/ticker is faster.
-                        # For now, we trust the fast-path price.
-                        pass
+                        ws.ready = True 
                 else:
                     # Fallback to slow path
                     data = await loop.run_in_executor(parse_executor, json.loads, message)
@@ -158,9 +152,9 @@ async def run_pipe(product_id="BTC-USD"):
                 net_latency = 0.0
                 # Latency calc only on tickers (has server 'time' field)
                 if is_ticker:
-                    time_idx = msg_str.find('"time":"')
+                    time_idx = message.find('"time":"')
                     if time_idx != -1:
-                        ts_str = msg_str[time_idx+8:time_idx+34] # Close enough to ISO
+                        ts_str = message[time_idx+8:time_idx+34] # Close enough to ISO
                         try:
                             server_ts = datetime.fromisoformat(ts_str.replace('Z', '')).timestamp()
                             net_latency = (time.time() - server_ts) * 1000
