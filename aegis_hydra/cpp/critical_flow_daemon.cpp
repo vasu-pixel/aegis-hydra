@@ -77,20 +77,19 @@ int main() {
       auto metrics = strategy.get_metrics(book);
 
       std::cerr << "\r[DAEMON] Price: " << packet.mid_price
-                << " | MLOFI: " << metrics.mlofi
-                << " | n: " << metrics.criticality
-                << " | Z: " << metrics.z_score              // Show Z-Score
-                << " | Samples: " << metrics.hawkes_samples // Show sample count
-                << " | σ: " << metrics.volatility
-                << " | Thresh: " << metrics.threshold
+                << " | M(Mag): " << metrics.m << " | h(Field): " << metrics.h
+                << " | T(Temp): " << metrics.T
                 << " | Latency: " << latency.count() << "ms " << std::flush;
 
-      // Output state for Python (including hawkes_samples for debugging)
+      // Output state for Python (Mapping Ising variables to old slots)
+      // M -> MLOFI
+      // h -> Criticality
+      // T -> Volatility
       std::cout << "STATE " << total_ticks << " " << packet.mid_price << " "
-                << metrics.mlofi << " " << latency.count() << " "
-                << packet.net_latency << " " << metrics.criticality << " "
-                << metrics.volatility << " " << metrics.threshold << " "
-                << metrics.hawkes_samples // Add sample count to output
+                << metrics.m << " " << latency.count() << " "
+                << packet.net_latency << " " << metrics.h << " " << metrics.T
+                << " " << 0.0f << " " // Threshold unused
+                << 0                  // Samples unused
                 << std::endl;
     }
 

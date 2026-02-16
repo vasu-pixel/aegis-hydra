@@ -100,6 +100,8 @@ while True:
         fig.add_hline(y=0.8, line_dash="dot", line_color="red", row=3, col=1)
 
         fig.update_layout(height=800, template="plotly_dark", showlegend=False)
-        chart_placeholder.plotly_chart(fig, use_container_width=True, key="live_hft_chart")
+        # Use dynamic key to prevent StreamlitDuplicateElementKey error in while loop
+        chart_key = f"live_hft_chart_{int(time.time()*100)}"
+        chart_placeholder.plotly_chart(fig, use_container_width=True, key=chart_key)
     
     time.sleep(1)
