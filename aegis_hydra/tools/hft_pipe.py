@@ -260,7 +260,8 @@ async def run_pipe(product_id="BTC-USD"):
                 ask_sizes = [a[1] for a in asks[:5]]
 
                 # Pack: fffd (mid, fut, net_lat, recv_time) + I (trade_count) + 20f (5 levels x 4 arrays)
-                packet = struct.pack('fffdI20f',
+                # Use '=' for standard alignment (no padding) to match C++ packed struct
+                packet = struct.pack('=fffdI20f',
                     price, fut_ws.price, net_latency, recv_time, trade_count_per_tick,
                     *bid_prices, *bid_sizes, *ask_prices, *ask_sizes)
 
