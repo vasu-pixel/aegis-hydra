@@ -100,6 +100,6 @@ while True:
         fig.add_hline(y=0.8, line_dash="dot", line_color="red", row=3, col=1)
 
         fig.update_layout(height=800, template="plotly_dark", showlegend=False)
-        chart_placeholder.plotly_chart(fig, use_container_width=True)
+        chart_placeholder.plotly_chart(fig, use_container_width=True, key="live_hft_chart")
     
     time.sleep(1)
