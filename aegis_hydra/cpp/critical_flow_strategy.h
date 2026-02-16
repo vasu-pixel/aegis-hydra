@@ -2,204 +2,173 @@
 #define CRITICAL_FLOW_STRATEGY_H
 
 #include "order_book.h"
+#include <algorithm>
 #include <cmath>
 #include <deque>
 #include <numeric>
-#include <vector>
 
-// --- ISING-GLASS STRATEGY ---
-// Uses Mean-Field Theory to detect Phase Transitions in order flow.
+// --- THE UNIFIED FIELD STRATEGY (HJB + ISING) ---
+// Type: Market Maker (Provides Liquidity)
+// Goal: Capture Spread (0.05%) + Avoid Fees (0.0%)
 class CriticalFlowStrategy {
 public:
   enum class Signal { HOLD, BUY, SELL };
 
 private:
   // --- CONFIGURATION ---
-  static constexpr float BASE_FEE = 0.001f; // 0.1% (Standard Taker)
+  // Maker Fees are 0.0% (Tier 0) or negative (Rebates).
+  // We effectively have a negative cost basis.
+  static constexpr float MAKER_FEE = 0.0f;
 
-  // Physics Parameters
-  static constexpr float COUPLING_J =
-      1.0f; // Interaction strength (Trend following)
-  static constexpr float CRITICAL_TEMP = 1.0f; // Phase transition point
+  // HJB Parameters (Inventory Control)
+  static constexpr float RISK_AVERSION =
+      5.0f; // Gamma (Aggressiveness to dump inventory)
+  static constexpr float MAX_INVENTORY =
+      0.01f; // Max BTC to hold before panic dumping
 
-  // Market Mapping
-  static constexpr float OFI_SENSITIVITY =
-      5.0f; // Scales Volume Imbalance to Field (h)
-  static constexpr float VOL_SENSITIVITY =
-      10.0f; // Scales Volatility to Temp (T)
+  // Ising Parameters (Trend Following)
+  static constexpr float ISING_ALPHA = 10.0f; // Trend influence on Fair Value
+  static constexpr float COUPLING_J = 1.0f;   // Ising Interaction Strength
+  static constexpr float CRITICAL_TEMP = 2.269f; // Curie Temperature
 
-  // Exit Logic
-  static constexpr double COOLDOWN_SEC = 0.5;
-  static constexpr double MAX_HOLD_SEC = 10.0;
+  // Market Physics
+  static constexpr double COOLDOWN_SEC = 0.1; // Fast requoting
 
   // State
-  std::deque<float> returns_window;
-  double last_exit_time = 0.0;
-  double entry_time = 0.0;
-  bool in_position = false;
-  Signal current_side = Signal::HOLD;
-  float entry_price = 0.0f;
-
-  // Ising State
-  float M_prev = 0.0f; // Previous Magnetization
+  std::deque<float> price_history;
+  double last_action_time = 0.0;
+  float inventory_btc = 0.0f; // Current Position (q)
+  float M_prev = 0.0f;        // Previous Magnetization
+  float entry_price = 0.0f;   // For tracking
 
 public:
-  // 1. Ingest Market Data & Update Physics State
+  // 1. Ingest Prices & Track Volatility
   void update_price(float mid_price, double timestamp) {
-    // (Keep basic return tracking for volatility calc)
-    if (returns_window.size() > 50)
-      returns_window.pop_front();
-    // ... (Standard volatility tracking code omitted for brevity, assume simple
-    // calc)
+    if (price_history.size() > 100)
+      price_history.pop_front();
+    price_history.push_back(mid_price);
   }
 
-  // 2. The Mean-Field Solver
-  // Solves M = tanh((J*M + h) / T) iteratively
-  // 2. The Mean-Field Solver
-  // Solves M = tanh((J*M + h) / T) iteratively
-  float solve_magnetization(float h, float T) {
-    if (std::isnan(h) || std::isnan(T))
-      return M_prev; // Ignore bad inputs
-    if (std::isnan(M_prev))
-      M_prev = 0.0f; // Reset if state corrupted
+  // Calculate Volatility (Sigma) for HJB Risk Term
+  float calculate_volatility() const {
+    if (price_history.size() < 10)
+      return 5.0f; // Default high vol
 
-    float m = M_prev;             // Start from last state (Hysteresis)
-    for (int i = 0; i < 5; ++i) { // 5 iterations is enough for convergence
-      float field = (COUPLING_J * m + h) / (T + 1e-6f);
-      m = std::tanh(field);
+    float sum = 0.0f, sq_sum = 0.0f;
+    for (float p : price_history)
+      sum += p;
+    float mean = sum / price_history.size();
+
+    for (float p : price_history)
+      sq_sum += (p - mean) * (p - mean);
+    return std::sqrt(sq_sum / price_history.size());
+  }
+
+  // 2. Solve Ising Magnetization (Mean Field Approximation)
+  float solve_ising_magnetization(float imbalance, float spread_vol) {
+    // Map Market to Physics Fields
+    float h = imbalance * 5.0f;            // External Field = Order Flow
+    float T = spread_vol * 1000.0f + 0.1f; // Temperature = Volatility
+
+    // Mean Field Iteration: M = tanh((J*M + h)/T)
+    float m = M_prev;
+    for (int i = 0; i < 3; ++i) { // Fast convergence
+      m = std::tanh((COUPLING_J * m + h) / T);
     }
-    M_prev = m; // Store for next tick (Memory)
+    M_prev = m;
     return m;
   }
 
-  // 3. Generate Signal
+  // 3. Generate Maker Signals (HJB Logic)
   Signal generate_signal(const OrderBook &book, double current_time,
                          float futures_price) {
     float mid_price = (book.bid_prices[0] + book.ask_prices[0]) / 2.0f;
 
-    // --- STEP A: MAP MARKET TO PHYSICS ---
+    // --- STEP A: CALCULATE "FAIR VALUE" (The HJB Price) ---
+    // This is the core "Proprietary" alpha.
 
-    // Field (h): Order Flow Imbalance
-    // If bids are heavy, h > 0 (Upward pressure)
-    float bid_vol = book.bid_sizes[0] + book.bid_sizes[1] + book.bid_sizes[2];
-    float ask_vol = book.ask_sizes[0] + book.ask_sizes[1] + book.ask_sizes[2];
-    float imbalance = (bid_vol - ask_vol) / (bid_vol + ask_vol + 1e-6f);
-    float h = imbalance * OFI_SENSITIVITY;
+    // 1. Inventory Risk (q * gamma * sigma^2)
+    float vol = calculate_volatility();
+    float inventory_skew = inventory_btc * RISK_AVERSION * vol;
 
-    // Add "External Field" from Futures Spread (The Lead-Lag alpha)
-    float spread_pct = (futures_price - mid_price) / mid_price;
-    h += spread_pct * 100.0f; // Strong weight on futures
+    // 2. Trend Bias (Ising Magnetization)
+    float bid_qty = book.bid_sizes[0];
+    float ask_qty = book.ask_sizes[0];
+    float imbalance = (bid_qty - ask_qty) / (bid_qty + ask_qty + 1e-5f);
+    float M = solve_ising_magnetization(imbalance, vol);
+    float trend_skew = M * ISING_ALPHA;
 
-    // Temperature (T): Inverse of Order Book Density?
-    // Actually, let's map Spread to Temp.
-    // Wide Spread = High Temp (Disordered). Tight Spread = Low Temp (Ordered).
-    // Note: If futures_price is 0, ignore spread part or handle gracefully?
-    // Assuming futures_price is valid from daemon.
+    // 3. The "Unified Field" Price
+    // If we are Long (q>0), Price drops -> We are more eager to Sell, less
+    // eager to Buy. If M > 0 (Trend Up), Price rises -> We chase the trend.
+    float fair_value = mid_price + trend_skew - inventory_skew;
 
-    float book_spread = (book.ask_prices[0] - book.bid_prices[0]) / mid_price;
-    float T = book_spread * 10000.0f; // Scaling factor
+    // --- STEP B: GENERATE QUOTES ---
 
-    // --- STEP B: SOLVE FOR MAGNETIZATION (M) ---
-    float M = solve_magnetization(h, T);
+    // Target Spread (Minimum to cover risk + profit)
+    // 5bps (0.05%) spread is our target
+    float half_spread = mid_price * 0.00025f;
 
-    // --- STEP C: TRADING LOGIC ---
+    float my_bid = fair_value - half_spread;
+    float my_ask = fair_value + half_spread;
 
-    // Cooldown
-    if (!in_position && (current_time - last_exit_time < COOLDOWN_SEC))
+    // --- STEP C: EXECUTION LOGIC (Maker) ---
+    // We signal BUY if the market Best Bid is below our Fair Bid (We want to
+    // post there) We signal SELL if the market Best Ask is above our Fair Ask
+
+    // Safety: Don't spam signals
+    if (current_time - last_action_time < COOLDOWN_SEC)
       return Signal::HOLD;
 
-    // ENTRY: Phase Transition WITH FEE HURDLE
-    // Only trade if M > 0.8 AND Spread covers fees
-    if (!in_position) {
-      float fee_hurdle = mid_price * 2.0f * BASE_FEE;
+    // Logic: If our calculated "Safe Buy Price" (my_bid) is higher than the
+    // current best bid, it means the market is "cheap" relative to our alpha.
+    // We post a limit buy. NOTE: In a real Maker bot, we would return the
+    // PRICE. Here we return SIGNAL to trigger the Python logic.
 
-      if (M > 0.8f && (futures_price - mid_price) > fee_hurdle) {
-        open_position(Signal::BUY, mid_price, current_time);
+    // Dynamic Adjustment:
+    // If we have NO inventory, we want to acquire (BUY).
+    // If we have inventory, we want to dispose (SELL).
+
+    if (std::abs(inventory_btc) < MAX_INVENTORY) {
+      // We are building position
+      if (my_bid > book.bid_prices[0]) {
+        // Our alpha says price is going up, join the bid
         return Signal::BUY;
-      }
-      if (M < -0.8f && (mid_price - futures_price) > fee_hurdle) {
-        open_position(Signal::SELL, mid_price, current_time);
-        return Signal::SELL;
       }
     }
 
-    // EXIT: Demagnetization
-    // If M drops below 0.5, the trend is breaking.
-    if (in_position) {
-      float pnl_pct = (current_side == Signal::BUY)
-                          ? (mid_price - entry_price) / entry_price
-                          : (entry_price - mid_price) / entry_price;
-
-      // 1. Hard Stop (-0.5%)
-      if (pnl_pct < -0.005f) {
-        close_position(current_time);
-        return Signal::HOLD;
+    if (inventory_btc > 0) {
+      // We are Long, looking to Sell
+      if (my_ask < book.ask_prices[0]) {
+        // Our alpha says price is dropping (or we have risk), join the ask
+        return Signal::SELL;
       }
-
-      // 2. Physics Exit (Phase Shift)
-      bool trend_broken = (current_side == Signal::BUY && M < 0.5f) ||
-                          (current_side == Signal::SELL && M > -0.5f);
-
-      if (trend_broken) {
-        close_position(current_time);
-        return Signal::HOLD;
-      }
-
-      // 3. Time Decay (Force exit after 10s)
-      if (current_time - entry_time > MAX_HOLD_SEC) {
-        close_position(current_time);
-        return Signal::HOLD;
-      }
-
-      return current_side;
     }
 
     return Signal::HOLD;
   }
 
-  // Helpers
-  void open_position(Signal side, float price, double time) {
-    in_position = true;
-    current_side = side;
-    entry_price = price;
-    entry_time = time;
-  }
+  // --- STATE TRACKING ---
+  // Python must call this when fills happen to update 'q' (Inventory)
+  void update_inventory(float qty_change) { inventory_btc += qty_change; }
 
-  void close_position(double time) {
-    in_position = false;
-    current_side = Signal::HOLD;
-    last_exit_time = time;
+  // Standard helpers
+  void open_position(Signal s, float p, double t, bool b) {
+    last_action_time = t;
   }
-
-  // Dummy methods for main.cpp compatibility
+  void close_position(double t) { last_action_time = t; }
   void record_trade() {}
+
   struct Metrics {
-    float m;
-    float h;
-    float T;
+    float M;
+    float q;
+    float fair;
+    float vol;
+    size_t n;
+    float z;
   };
-  // Updated get_metrics to return relevant Ising variables
-  // Note: generate_signal is called before get_metrics usually, so we need to
-  // access internal state or recompute. Since M_prev stores the last solved M,
-  // we can return it. We need to recompute h and T for logging if they aren't
-  // stored. For simplicity, let's store last_h and last_T. Since the user
-  // provided code didn't have members for it, I will add them or compute on
-  // fly. Recomputing on fly inside get_metrics is safer if book is passed.
-
-  Metrics get_metrics(const OrderBook &book) {
-    // Recompute logic for logging consistency
-    float mid_price = (book.bid_prices[0] + book.ask_prices[0]) / 2.0f;
-    float bid_vol = book.bid_sizes[0] + book.bid_sizes[1] + book.bid_sizes[2];
-    float ask_vol = book.ask_sizes[0] + book.ask_sizes[1] + book.ask_sizes[2];
-    float imbalance = (bid_vol - ask_vol) / (bid_vol + ask_vol + 1e-6f);
-    float h = imbalance * OFI_SENSITIVITY;
-    // Note: Futures spread part of h is missing here if we don't pass
-    // futures_price. We can store last_h in generate_signal.
-
-    float book_spread = (book.ask_prices[0] - book.bid_prices[0]) / mid_price;
-    float T = book_spread * 10000.0f;
-
-    return {M_prev, h, T};
+  Metrics get_metrics(const OrderBook &) const {
+    return {M_prev, inventory_btc, 0.0f, 0.0f, 0, 0.0f};
   }
 };
 

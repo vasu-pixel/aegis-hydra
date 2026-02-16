@@ -77,19 +77,19 @@ int main() {
       auto metrics = strategy.get_metrics(book);
 
       std::cerr << "\r[DAEMON] Price: " << packet.mid_price
-                << " | M(Mag): " << metrics.m << " | h(Field): " << metrics.h
-                << " | T(Temp): " << metrics.T
+                << " | M(Mag): " << metrics.M << " | q(Inv): " << metrics.q
+                << " | Fair: " << metrics.fair
                 << " | Latency: " << latency.count() << "ms " << std::flush;
 
-      // Output state for Python (Mapping Ising variables to old slots)
+      // Output state for Python (Mapping Maker variables to old slots)
       // M -> MLOFI
-      // h -> Criticality
-      // T -> Volatility
+      // q -> Criticality
+      // Fair -> Volatility
       std::cout << "STATE " << total_ticks << " " << packet.mid_price << " "
-                << metrics.m << " " << latency.count() << " "
-                << packet.net_latency << " " << metrics.h << " " << metrics.T
+                << metrics.M << " " << latency.count() << " "
+                << packet.net_latency << " " << metrics.q << " " << metrics.fair
                 << " " << 0.0f << " " // Threshold unused
-                << 0                  // Samples unused
+                << metrics.n          // Samples/N unused
                 << std::endl;
     }
 
