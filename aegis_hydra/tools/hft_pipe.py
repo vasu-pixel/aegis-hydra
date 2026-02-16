@@ -7,6 +7,7 @@ import subprocess
 import gc
 import concurrent.futures
 import json
+import random
 from datetime import datetime
 
 # Absolute Path to Daemon
@@ -105,7 +106,7 @@ async def run_pipe(product_id="BTCUSDT"):
     # 4. Background Tasks
     maintenance_counter = 0
     async def background_maintenance():
-        nonlocal data_buffer, signal_buffer, latency_buffer, latency_stats, maintenance_counter
+        nonlocal data_buffer, signal_buffer, latency_buffer, analysis_buffer, latency_stats, maintenance_counter
         while True:
             await asyncio.sleep(0.5)
             maintenance_counter += 1
