@@ -97,20 +97,32 @@ class SniperEngine:
 
     async def snipe_stale_order(self, side, qty, limit_price):
         """
-        Attempts to pick off a specific price level (IOC).
+        The Vacuum Executioner (IOC).
+        Sweeps available liquidity up to 'limit_price'.
         """
         if not self.active: return None
         try:
-            return await self.exchange.create_order(
+            # TimeInForce: IOC (Immediate-Or-Cancel)
+            # This ensures we don't leave passive limit orders if the book moves.
+            order = await self.exchange.create_order(
                 symbol=self.symbol,
                 type='limit',
                 side=side,
                 amount=qty,
                 price=limit_price,
-                params={'timeInForce': 'IOC'} # Fill exactly at this price or cancel
+                params={'timeInForce': 'IOC'} 
             )
+            
+            # Check for partial/full fills
+            filled = order.get('filled', 0)
+            if filled > 0:
+                print(f"✅ VACUUM SUCCESS: Swept {filled} {self.symbol} @ Avg {order.get('average', 'N/A')}")
+            else:
+                print(f"❌ VACUUM MISFIRE: Order cancelled (Book empty or moved).")
+                
+            return order
         except Exception as e:
-            print(f"❌ SNIPE FAILED: {e}")
+            print(f"❌ VACUUM FAILED: {e}")
             return None
 
     async def snipe_limit(self, side: str, quantity: float, price: float):
