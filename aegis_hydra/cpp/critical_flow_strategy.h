@@ -66,10 +66,11 @@ public:
   }
 
   // 2. Solve Ising Magnetization (Mean Field Approximation)
+  // 2. Solve Ising Magnetization (Mean Field Approximation)
   float solve_ising_magnetization(float imbalance, float spread_vol) {
     // Map Market to Physics Fields
-    float h = imbalance * 5.0f;            // External Field = Order Flow
-    float T = spread_vol * 1000.0f + 0.1f; // Temperature = Volatility
+    float h = imbalance * 5.0f;         // External Field = Order Flow
+    float T = spread_vol * 0.1f + 0.1f; // Temperature = Volatility
 
     // Mean Field Iteration: M = tanh((J*M + h)/T)
     float m = M_prev;
