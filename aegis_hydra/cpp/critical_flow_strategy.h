@@ -23,8 +23,9 @@ private:
   static constexpr int VOL_WINDOW = 100;
 
   // Strategy parameters
-  static constexpr float BASE_FEE = 0.0001f; // 0.01% (VIP Fee / Paper Trading)
-  static constexpr float LATENCY_MS = 8.0f;  // 8ms total latency
+  static constexpr float BASE_FEE =
+      0.001f; // 0.1% (Standard Taker Fee / Reality Check)
+  static constexpr float LATENCY_MS = 8.0f;          // 8ms total latency
   static constexpr float VOL_MULTIPLIER = 3.0f;      // Volatility buffer
   static constexpr float URGENCY_DISCOUNT = 0.0005f; // Criticality discount
 
@@ -36,7 +37,7 @@ private:
   static constexpr double MIN_PROFIT_PCT = 0.0005; // 0.05% net profit target
   static constexpr double COOLDOWN_SEC = 2.0;      // 2s cooldown after exit
   static constexpr double GRACE_PERIOD_SEC =
-      0.0; // 0s grace period (Instant Reaction per User Request)
+      5.0; // 5s immunity after entry (Increased)
 
   float prev_mid_price = 0.0f;
   uint64_t trade_count_per_tick = 0;
@@ -212,10 +213,10 @@ public:
 
       // ARBITRAGE EXIT LOGIC
       if (is_arb_trade) {
-        // Exit if Z-Score FULLY reverts (Mean Reversion)
-        // Threshold: 0.0 (Wait for Z to cross mean)
-        bool converged = (current_side == Signal::BUY && z_score < 0.0f) ||
-                         (current_side == Signal::SELL && z_score > 0.0f);
+        // Exit if Z-Score reverts (Mean Reversion)
+        // Threshold: 0.5 (close enough to mean)
+        bool converged = (current_side == Signal::BUY && z_score < 0.5f) ||
+                         (current_side == Signal::SELL && z_score > -0.5f);
 
         if (converged) {
           close_position(current_time);
