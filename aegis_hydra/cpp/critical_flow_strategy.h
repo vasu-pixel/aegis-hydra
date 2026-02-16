@@ -37,9 +37,10 @@ private:
   // State
   std::deque<float> price_history;
   double last_action_time = 0.0;
-  float inventory_btc = 0.0f; // Current Position (q)
-  float M_prev = 0.0f;        // Previous Magnetization
-  float entry_price = 0.0f;   // For tracking
+  float inventory_btc = 0.0f;   // Current Position (q)
+  float M_prev = 0.0f;          // Previous Magnetization
+  float entry_price = 0.0f;     // For tracking
+  float last_fair_value = 0.0f; // For logging
 
 public:
   // 1. Ingest Prices & Track Volatility
@@ -102,6 +103,7 @@ public:
     // If we are Long (q>0), Price drops -> We are more eager to Sell, less
     // eager to Buy. If M > 0 (Trend Up), Price rises -> We chase the trend.
     float fair_value = mid_price + trend_skew - inventory_skew;
+    last_fair_value = fair_value; // Store for logging
 
     // --- STEP B: GENERATE QUOTES ---
 
@@ -168,7 +170,7 @@ public:
     float z;
   };
   Metrics get_metrics(const OrderBook &) const {
-    return {M_prev, inventory_btc, 0.0f, 0.0f, 0, 0.0f};
+    return {M_prev, inventory_btc, last_fair_value, 0.0f, 0, 0.0f};
   }
 };
 

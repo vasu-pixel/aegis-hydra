@@ -453,6 +453,7 @@ async def run_pipe(product_id="BTCUSD"):
 
                     # 2. Calc Max Size (50% of Capital)
                     usd_available = tracker.capital * 0.50
+                    if limit_price <= 0: return # Prevent ZeroDivisionError
                     qty = usd_available / limit_price
                     
                     # 3. Execution (Simulated IOC)
