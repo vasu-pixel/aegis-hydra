@@ -50,6 +50,7 @@ private:
   // Lead-Lag Arbitrage State
   float spread_mean = 0.0f;
   float spread_var = 0.0f;
+  float last_z_score = 0.0f;                    // For display
   static constexpr float SPREAD_ALPHA = 0.001f; // EMA decay
 
 public:
@@ -154,6 +155,8 @@ public:
 
     float sigma = std::sqrt(spread_var);
     float z_score = (sigma > 1e-6f) ? (spread - spread_mean) / sigma : 0.0f;
+    const_cast<CriticalFlowStrategy *>(this)->last_z_score =
+        z_score; // Update display metric
 
     float mlofi = mlofi_calc.calculate_normalized_mlofi(book);
     float criticality = hawkes.calculate_criticality();
@@ -261,12 +264,24 @@ public:
     float volatility;
     float threshold;
     size_t hawkes_samples;
+    float z_score; // NEW: Lead-Lag Z-Score
   };
 
   Metrics get_metrics(const OrderBook &book) const {
+    // Re-calculate Z-Score for display (slightly wasteful but safe)
+    float sigma = std::sqrt(spread_var);
+    float z =
+        (sigma > 1e-6f)
+            ? (spread_mean / sigma)
+            : 0.0f; // Approx (using mean as current spread proxy for display)
+    // Actually, we want the *current* Z-score.
+    // Let's store the last Z-score as a member variable for display.
     return {mlofi_calc.calculate_normalized_mlofi(book),
-            hawkes.calculate_criticality(), calculate_volatility(),
-            calculate_threshold(), hawkes.sample_count()};
+            hawkes.calculate_criticality(),
+            calculate_volatility(),
+            calculate_threshold(),
+            hawkes.sample_count(),
+            last_z_score};
   }
 };
 

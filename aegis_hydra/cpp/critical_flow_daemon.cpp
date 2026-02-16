@@ -79,6 +79,7 @@ int main() {
       std::cerr << "\r[DAEMON] Price: " << packet.mid_price
                 << " | MLOFI: " << metrics.mlofi
                 << " | n: " << metrics.criticality
+                << " | Z: " << metrics.z_score              // Show Z-Score
                 << " | Samples: " << metrics.hawkes_samples // Show sample count
                 << " | σ: " << metrics.volatility
                 << " | Thresh: " << metrics.threshold
