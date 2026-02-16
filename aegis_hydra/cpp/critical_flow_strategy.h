@@ -101,14 +101,16 @@ public:
     if (!in_position && (current_time - last_exit_time < COOLDOWN_SEC))
       return Signal::HOLD;
 
-    // ENTRY: Phase Transition
-    // When Magnetization breaks +/- 0.8, the market has "Chosen" a direction.
+    // ENTRY: Phase Transition WITH FEE HURDLE
+    // Only trade if M > 0.8 AND Spread covers fees
     if (!in_position) {
-      if (M > 0.8f) {
+      float fee_hurdle = mid_price * 2.0f * BASE_FEE;
+
+      if (M > 0.8f && (futures_price - mid_price) > fee_hurdle) {
         open_position(Signal::BUY, mid_price, current_time);
         return Signal::BUY;
       }
-      if (M < -0.8f) {
+      if (M < -0.8f && (mid_price - futures_price) > fee_hurdle) {
         open_position(Signal::SELL, mid_price, current_time);
         return Signal::SELL;
       }
