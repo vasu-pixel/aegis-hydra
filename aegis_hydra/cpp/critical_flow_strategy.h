@@ -36,7 +36,7 @@ private:
   static constexpr double MIN_PROFIT_PCT = 0.0005; // 0.05% net profit target
   static constexpr double COOLDOWN_SEC = 2.0;      // 2s cooldown after exit
   static constexpr double GRACE_PERIOD_SEC =
-      5.0; // 5s immunity after entry (Increased)
+      0.0; // 0s grace period (Instant Reaction per User Request)
 
   float prev_mid_price = 0.0f;
   uint64_t trade_count_per_tick = 0;
@@ -212,10 +212,10 @@ public:
 
       // ARBITRAGE EXIT LOGIC
       if (is_arb_trade) {
-        // Exit if Z-Score reverts (Mean Reversion)
-        // Threshold: 0.5 (close enough to mean)
-        bool converged = (current_side == Signal::BUY && z_score < 0.5f) ||
-                         (current_side == Signal::SELL && z_score > -0.5f);
+        // Exit if Z-Score FULLY reverts (Mean Reversion)
+        // Threshold: 0.0 (Wait for Z to cross mean)
+        bool converged = (current_side == Signal::BUY && z_score < 0.0f) ||
+                         (current_side == Signal::SELL && z_score > 0.0f);
 
         if (converged) {
           close_position(current_time);
