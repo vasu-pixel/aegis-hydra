@@ -71,7 +71,7 @@ async def run_pipe(product_id="BTCUSD"):
         prev_price = 0.0
         entry_price = 0.0      # Track entry price for P&L calculation
         entry_time = 0.0       # Track entry time for stats
-        fee_rate = 0.001       # Binance: 0.1% taker (vs Coinbase 0.6%)
+        fee_rate = 0.000       # Fees Set to 0.0% (VIP / Paper Mode)
 
         # HFT MODE: ZERO RESTRICTIONS
         min_hold_seconds = 0.0  # NO MINIMUM HOLD - Trade at physics speed!
