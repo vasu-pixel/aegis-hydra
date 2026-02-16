@@ -30,7 +30,7 @@ def log_csv_sync(filename, lines):
             f.writelines(lines)
     except: pass
 
-async def run_pipe(product_id="BTC-USD"):
+async def run_pipe(product_id="BTCUSDT"):
     # 0. Zero Jitter Tuning: Kill the Garbage Collector
     gc.collect() # Clean up once
     gc.freeze()  # Move all current objects to permanent generation 
@@ -85,6 +85,7 @@ async def run_pipe(product_id="BTC-USD"):
     state_history = []
     data_buffer = [] 
     signal_buffer = []
+    analysis_buffer = [] # NEW: High-res analysis log
 
     print("=== ZERO-WAIT DECOUPLED HFT PIPE ===")
 
@@ -110,7 +111,20 @@ async def run_pipe(product_id="BTC-USD"):
             maintenance_counter += 1
 
             if state_history:
-                loop.run_in_executor(io_executor, save_state_sync, state_history[-500:])
+                # Convert state history to CSV lines
+                # Format: time, price, z_score, criticality, mlofi, latency
+                analysis_lines = []
+                for s in state_history:
+                    # Only log if not already logged (need a cursor? or just dump last chunk?)
+                    # Simple approach: Plotter reads last N lines. We append new lines.
+                    # But state_history is a rolling buffer. 
+                    # Let's just log the *latest* state to a file if it changed?
+                    pass 
+                
+                # Better: Log to CSV immediately when parsing STATE
+                # logic is in read_signals.
+                pass
+
             if data_buffer:
                 lines = data_buffer[:]
                 data_buffer = []
@@ -119,6 +133,10 @@ async def run_pipe(product_id="BTC-USD"):
                 sigs = signal_buffer[:]
                 signal_buffer = []
                 loop.run_in_executor(io_executor, log_csv_sync, "hft_signals.csv", sigs)
+            if analysis_buffer:
+                lines = analysis_buffer[:]
+                analysis_buffer = []
+                loop.run_in_executor(io_executor, log_csv_sync, "hft_analysis.csv", lines)
             if latency_buffer:
                 lat_lines = latency_buffer[:]
                 latency_buffer = []
@@ -259,7 +277,14 @@ async def run_pipe(product_id="BTC-USD"):
                 ask_prices = [a[0] for a in asks[:5]]
                 ask_sizes = [a[1] for a in asks[:5]]
 
+                # DEBUG: Verify flows
+                # if random.random() < 0.01:
+                #    print(f"DEBUG: Spot={price:.2f} Fut={fut_ws.price:.2f} Z={shared_state.get('z_score',0):.2f}")
+
                 # Pack: fffd (mid, fut, net_lat, recv_time) + I (trade_count) + 20f (5 levels x 4 arrays)
+                if fut_ws.price == 0.0 and random.random() < 0.001:
+                     print(f"⚠️  WARNING: Futures Price is 0.0! (Feed not ready?)")
+                
                 # Use '=' for standard alignment (no padding) to match C++ packed struct
                 packet = struct.pack('=fffdI20f',
                     price, fut_ws.price, net_latency, recv_time, trade_count_per_tick,
@@ -324,6 +349,25 @@ async def run_pipe(product_id="BTC-USD"):
                     shared_state["criticality"] = float(parts[6])  # Hawkes branching ratio (n)
                     shared_state["volatility"] = float(parts[7])   # Price volatility (σ)
                     shared_state["threshold"] = float(parts[8])    # Dynamic threshold
+                    
+                    # Z-Score (Lead-Lag) - added in recent C++ update
+                    if len(parts) > 9:
+                        shared_state["z_score"] = float(parts[9])
+                    else:
+                        shared_state["z_score"] = 0.0
+
+                    # Log to Analysis CSV (for Plotter)
+                    # Format: time, price, z_score, criticality, mlofi
+                    analysis_buffer.append(
+                        f"{shared_state['time']},{shared_state['price']},{shared_state['z_score']},"
+                        f"{shared_state['criticality']},{shared_state['mlofi']}\n"
+                    )
+                    
+                    # Z-Score (Lead-Lag) - added in recent C++ update
+                    if len(parts) > 9:
+                        shared_state["z_score"] = float(parts[9])
+                    else:
+                        shared_state["z_score"] = 0.0
 
                     # Calculate full latency breakdown
                     if hasattr(ws, 'last_packet_time'):

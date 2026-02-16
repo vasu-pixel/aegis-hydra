@@ -242,7 +242,12 @@ class BinanceFuturesWS:
     WS_URL = "wss://fstream.binance.com/ws"
 
     def __init__(self, symbol="btcusdt"):
-        self.symbol = symbol.lower()
+        # Map Spot (BTC-USD) to Futures (BTCUSDT)
+        sl = symbol.lower().replace("-", "")
+        if sl == 'btcusd': self.symbol = 'btcusdt'
+        elif sl == 'ethusd': self.symbol = 'ethusdt'
+        else: self.symbol = sl
+        
         self.price = 0.0
         self.latency = 0.0
         self.ready = False
