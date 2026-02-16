@@ -55,7 +55,14 @@ public:
 
   // 2. The Mean-Field Solver
   // Solves M = tanh((J*M + h) / T) iteratively
+  // 2. The Mean-Field Solver
+  // Solves M = tanh((J*M + h) / T) iteratively
   float solve_magnetization(float h, float T) {
+    if (std::isnan(h) || std::isnan(T))
+      return M_prev; // Ignore bad inputs
+    if (std::isnan(M_prev))
+      M_prev = 0.0f; // Reset if state corrupted
+
     float m = M_prev;             // Start from last state (Hysteresis)
     for (int i = 0; i < 5; ++i) { // 5 iterations is enough for convergence
       float field = (COUPLING_J * m + h) / (T + 1e-6f);
