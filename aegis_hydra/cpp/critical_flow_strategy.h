@@ -29,7 +29,8 @@ private:
   static constexpr float URGENCY_DISCOUNT = 0.0005f; // Criticality discount
 
   // Dynamic Surrender & Churn Reduction
-  static constexpr float ENTRY_CRITICALITY = 0.8f;     // Toughened Entry (0.8)
+  static constexpr float ENTRY_CRITICALITY =
+      5.0f; // 5.0 = Disabled (Pure Arb Mode)
   static constexpr float SURRENDER_CRITICALITY = 0.2f; // Exit if signal decays
   static constexpr float MAINTENANCE_CRITICALITY = 0.3f; // Hold zone
 
