@@ -23,14 +23,13 @@ private:
   static constexpr int VOL_WINDOW = 100;
 
   // Strategy parameters
-  static constexpr float BASE_FEE = 0.001f;          // 0.1% taker fee
-  static constexpr float LATENCY_MS = 8.0f;          // 8ms total latency
+  static constexpr float BASE_FEE = 0.0001f; // 0.01% (VIP Fee / Paper Trading)
+  static constexpr float LATENCY_MS = 8.0f;  // 8ms total latency
   static constexpr float VOL_MULTIPLIER = 3.0f;      // Volatility buffer
   static constexpr float URGENCY_DISCOUNT = 0.0005f; // Criticality discount
 
   // Dynamic Surrender & Churn Reduction
-  static constexpr float ENTRY_CRITICALITY =
-      5.0f; // 5.0 = Disabled (Pure Arb Mode)
+  static constexpr float ENTRY_CRITICALITY = 0.8f;     // Toughened Entry (0.8)
   static constexpr float SURRENDER_CRITICALITY = 0.2f; // Exit if signal decays
   static constexpr float MAINTENANCE_CRITICALITY = 0.3f; // Hold zone
 

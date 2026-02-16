@@ -31,7 +31,7 @@ def log_csv_sync(filename, lines):
             f.writelines(lines)
     except: pass
 
-async def run_pipe(product_id="BTCUSDT"):
+async def run_pipe(product_id="BTCUSD"):
     # 0. Zero Jitter Tuning: Kill the Garbage Collector
     gc.collect() # Clean up once
     gc.freeze()  # Move all current objects to permanent generation 
