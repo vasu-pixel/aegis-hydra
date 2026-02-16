@@ -29,8 +29,7 @@ private:
   static constexpr float URGENCY_DISCOUNT = 0.0005f; // Criticality discount
 
   // Dynamic Surrender & Churn Reduction
-  static constexpr float ENTRY_CRITICALITY =
-      0.7f; // Only enter on strong bursts
+  static constexpr float ENTRY_CRITICALITY = 0.8f;     // Toughened Entry (0.8)
   static constexpr float SURRENDER_CRITICALITY = 0.2f; // Exit if signal decays
   static constexpr float MAINTENANCE_CRITICALITY = 0.3f; // Hold zone
 
@@ -47,6 +46,11 @@ private:
   bool in_position = false;
   float entry_price = 0.0f;
   Signal current_side = Signal::HOLD;
+
+  // Lead-Lag Arbitrage State
+  float spread_mean = 0.0f;
+  float spread_var = 0.0f;
+  static constexpr float SPREAD_ALPHA = 0.001f; // EMA decay
 
 public:
   // Update with new price tick
@@ -134,17 +138,43 @@ public:
     return threshold;
   }
 
-  // Generate trading signal with Dynamic Surrender
-  Signal generate_signal(const OrderBook &book, double current_time) {
+  // Generate trading signal with Dynamic Surrender + Lead-Lag Arb
+  Signal generate_signal(const OrderBook &book, double current_time,
+                         float futures_price) {
     // Calculate parameters
+    float mid_price = (book.bid_prices[0] + book.ask_prices[0]) / 2.0f;
+    float spread = futures_price - mid_price;
+
+    // 0. Update Spread Stats (Lead-Lag)
+    if (futures_price > 0.0f) {
+      spread_mean = (1 - SPREAD_ALPHA) * spread_mean + SPREAD_ALPHA * spread;
+      spread_var = (1 - SPREAD_ALPHA) * spread_var +
+                   SPREAD_ALPHA * std::pow(spread - spread_mean, 2);
+    }
+
+    float sigma = std::sqrt(spread_var);
+    float z_score = (sigma > 1e-6f) ? (spread - spread_mean) / sigma : 0.0f;
+
     float mlofi = mlofi_calc.calculate_normalized_mlofi(book);
     float criticality = hawkes.calculate_criticality();
     float threshold = calculate_threshold();
-    float mid_price = (book.bid_prices[0] + book.ask_prices[0]) / 2.0f;
 
     // 1. Cooldown Check
     if (!in_position && (current_time - last_exit_time < COOLDOWN_SEC)) {
       return Signal::HOLD;
+    }
+
+    // 3. Lead-Lag Arbitrage Entry (Priority 1)
+    // Only if not in position (or maybe allow adding? No, simple for now)
+    if (!in_position) {
+      if (z_score > 3.0f && spread > (mid_price * 2.0f * BASE_FEE)) {
+        open_position(Signal::BUY, mid_price, current_time);
+        return Signal::BUY;
+      }
+      if (z_score < -3.0f && spread < -(mid_price * 2.0f * BASE_FEE)) {
+        open_position(Signal::SELL, mid_price, current_time);
+        return Signal::SELL;
+      }
     }
 
     // 2. Position Management (Surrender Logic)
@@ -174,8 +204,11 @@ public:
         return current_side;
       }
 
-      // Take Profit (if target met)
-      if (pnl_pct > MIN_PROFIT_PCT) {
+      // Take Profit (Gross PnL must cover fees + tail risk)
+      // Fees = 0.1% * 2 = 0.2%
+      // Target = 0.2% + 0.05% = 0.25% min move
+      float fee_hurdle = 2.0f * BASE_FEE;
+      if (pnl_pct > (fee_hurdle + MIN_PROFIT_PCT)) {
         // Trailing logic could go here, for now take profit
         close_position(current_time);
         return Signal::HOLD;

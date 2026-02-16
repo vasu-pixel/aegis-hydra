@@ -95,6 +95,24 @@ class SniperEngine:
             print(f"❌ MISFIRE: {e}")
             return None
 
+    async def snipe_stale_order(self, side, qty, limit_price):
+        """
+        Attempts to pick off a specific price level (IOC).
+        """
+        if not self.active: return None
+        try:
+            return await self.exchange.create_order(
+                symbol=self.symbol,
+                type='limit',
+                side=side,
+                amount=qty,
+                price=limit_price,
+                params={'timeInForce': 'IOC'} # Fill exactly at this price or cancel
+            )
+        except Exception as e:
+            print(f"❌ SNIPE FAILED: {e}")
+            return None
+
     async def snipe_limit(self, side: str, quantity: float, price: float):
         """
         Limit order version (maker rebate potential).

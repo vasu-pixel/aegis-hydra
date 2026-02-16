@@ -47,8 +47,9 @@ async def run_pipe(product_id="BTC-USD"):
     loop = asyncio.get_running_loop()
     
     # 1. Connect WS
-    from ..market.binance_ws import BinanceWebSocket
+    from ..market.binance_ws import BinanceWebSocket, BinanceFuturesWS
     ws = BinanceWebSocket(product_id)
+    fut_ws = BinanceFuturesWS(product_id.replace("-", "").lower()) # Global Futures
     
     print(f"Starting C++ Daemon: {DAEMON_PATH}")
     
@@ -60,6 +61,7 @@ async def run_pipe(product_id="BTC-USD"):
         stderr=sys.stderr,
         bufsize=0
     )
+
     
     # 3. State Tracker
     class Tracker:
@@ -139,12 +141,13 @@ async def run_pipe(product_id="BTC-USD"):
             if latency_stats['total']:
                 import statistics
                 print(f"\n📊 Latency Stats (last 500ms):")
-                print(f"   Network:  {statistics.mean(latency_stats['network']):.2f}ms avg")
+                print(f"   Network:  {statistics.mean(latency_stats['network']):.2f}ms avg (Spot)")
+                print(f"   FutLat:   {fut_ws.latency:.2f}ms lag (Futures)")
                 print(f"   Parse:    {statistics.mean(latency_stats['parse']):.2f}ms avg")
                 print(f"   Physics:  {statistics.mean(latency_stats['physics']):.2f}ms avg")
                 print(f"   SigRead:  {statistics.mean(latency_stats['signal_read']):.2f}ms avg")
-                print(f"   TOTAL:    {statistics.mean(latency_stats['total']):.2f}ms avg")
-
+                print(f"   TOTAL:    {statistics.mean(latency_stats['total']):.2f}ms avg (Spot E2E)")
+                
                 # Clear stats for next interval
                 for key in latency_stats:
                     latency_stats[key] = []
@@ -256,9 +259,9 @@ async def run_pipe(product_id="BTC-USD"):
                 ask_prices = [a[0] for a in asks[:5]]
                 ask_sizes = [a[1] for a in asks[:5]]
 
-                # Pack: ffd (mid, net_lat, recv_time) + I (trade_count) + 20f (5 levels x 4 arrays)
-                packet = struct.pack('ffdI20f',
-                    price, net_latency, recv_time, trade_count_per_tick,
+                # Pack: fffd (mid, fut, net_lat, recv_time) + I (trade_count) + 20f (5 levels x 4 arrays)
+                packet = struct.pack('fffdI20f',
+                    price, fut_ws.price, net_latency, recv_time, trade_count_per_tick,
                     *bid_prices, *bid_sizes, *ask_prices, *ask_sizes)
 
                 packet_queue.put_nowait(packet)
@@ -446,6 +449,7 @@ async def run_pipe(product_id="BTC-USD"):
 
                     signal_buffer.append(f"{time.time()},{decoded},{current_price:.2f},{pnl_pct:.4f}\n")
 
+    asyncio.create_task(fut_ws.connect()) # Start Futures Feed
     asyncio.create_task(read_signals(process.stdout))
     asyncio.create_task(background_maintenance())
     asyncio.create_task(pipe_writer())

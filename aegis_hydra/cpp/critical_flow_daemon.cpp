@@ -8,6 +8,7 @@
 // Use packed attribute to match Python struct packing exactly
 struct __attribute__((packed)) InputPacket {
   float mid_price;
+  float futures_price; // Leader signal
   float net_latency;
   double recv_time;
   uint32_t trade_count; // Number of trades since last tick
@@ -65,7 +66,8 @@ int main() {
     strategy.update_price(packet.mid_price, packet.recv_time);
 
     // Generate signal
-    auto signal = strategy.generate_signal(book, packet.recv_time);
+    auto signal =
+        strategy.generate_signal(book, packet.recv_time, packet.futures_price);
 
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<float, std::milli> latency = end - start;
