@@ -1,131 +1,105 @@
 
-import json
-import time
-import os
-import matplotlib
-matplotlib.use('Agg') # Headless mode
-import matplotlib.pyplot as plt
+import streamlit as st
 import pandas as pd
-from datetime import datetime
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import os
+import time
 
-def run_dashboard():
-    print("Starting Dashboard... (Watching paper_state.json)")
-    print("=== CRITICAL FLOW SNIPER DASHBOARD ===")
-    print("Displaying: MLOFI, Hawkes Criticality (n), Volatility, Threshold, Latency")
-    # plt.ion() # Removed for headless
-    fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(5, 1, figsize=(10, 20), sharex=True)
+# Config
+st.set_page_config(layout="wide", page_title="Aegis Hydra: HFT Monitor")
+ANALYSIS_FILE = "hft_analysis.csv"
+SIGNALS_FILE = "hft_signals.csv"
+WINDOW_SIZE = 200
+
+st.title("⚡ Aegis Hydra: HFT Lead-Lag Monitor")
+
+# Auto-refresh logic
+if 'last_update' not in st.session_state:
+    st.session_state.last_update = time.time()
+
+def load_data():
+    if not os.path.exists(ANALYSIS_FILE):
+        return pd.DataFrame(), pd.DataFrame()
     
-    while True:
-        try:
-            if not os.path.exists("paper_state.json"):
-                time.sleep(1)
-                continue
+    # Read Analysis Data (last N lines to separate read)
+    # Using python engine for stability with bad lines
+    try:
+        # Read tail using system command for speed on large files? 
+        # For now, just pandas read_csv
+        df = pd.read_csv(ANALYSIS_FILE, names=['time', 'price', 'z_score', 'n', 'mlofi'])
+        if len(df) > WINDOW_SIZE:
+             df = df.iloc[-WINDOW_SIZE:]
+    except:
+        df = pd.DataFrame()
+
+    try:
+        if os.path.exists(SIGNALS_FILE):
+            sigs = pd.read_csv(SIGNALS_FILE, names=['time', 'msg', 'price', 'pnl'])
+        else:
+            sigs = pd.DataFrame()
+    except:
+        sigs = pd.DataFrame()
+        
+    return df, sigs
+
+# Placeholder for charts
+chart_placeholder = st.empty()
+metrics_placeholder = st.empty()
+
+while True:
+    df, sigs = load_data()
+    
+    if not df.empty:
+        # Metrics
+        last_row = df.iloc[-1]
+        with metrics_placeholder.container():
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Spot Price", f"${last_row['price']:.2f}")
+            c2.metric("Z-Score (Lead-Lag)", f"{last_row['z_score']:.2f}", 
+                     delta_color="off" if abs(last_row['z_score']) < 3 else "inverse")
+            c3.metric("Criticality (n)", f"{last_row['n']:.2f}",
+                     delta_color="inverse" if last_row['n'] > 0.8 else "normal")
+            c4.metric("MLOFI", f"{last_row['mlofi']:.4f}")
+
+        # Charts
+        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
+                            vertical_spacing=0.05,
+                            subplot_titles=("Spot Price & Signals", "Z-Score (Futures - Spot)", "Hawkes Criticality"))
+
+        # 1. Price
+        fig.add_trace(go.Scatter(x=df['time'], y=df['price'], mode='lines', name='Price', line=dict(color='cyan')), row=1, col=1)
+        
+        # Signals Overlay
+        if not sigs.empty:
+            recent_sigs = sigs[sigs['time'] >= df['time'].min()]
+            for _, row in recent_sigs.iterrows():
+                symbol = "circle"
+                color = "yellow"
+                size = 8
+                if "BUY" in row['msg']: 
+                    symbol = "triangle-up"
+                    color = "green"
+                    size = 12
+                elif "SELL" in row['msg']:
+                    symbol = "triangle-down"
+                    color = "red"
+                    size = 12
                 
-            with open("paper_state.json", "r") as f:
-                data = json.load(f)
-            
-            if not data:
-                time.sleep(1)
-                continue
-                
-            df = pd.DataFrame(data)
-            df['time'] = pd.to_datetime(df['time'])
-            
-            # Clear axes
-            ax1.clear(); ax2.clear(); ax3.clear(); ax4.clear(); ax5.clear()
-            
-            # 1. Price & Trades
-            ax1.plot(df['step'], df['price'], color='orange', label='BTC Price')
-            ax1.set_ylabel("Price")
-            ax1.set_title("Live Market")
-            ax1.grid(True, alpha=0.3)
-            
-            # 2. Capital
-            ax2.plot(df['step'], df['capital'], color='green', label='Equity')
-            ax2.set_ylabel("Capital ($)")
-            ax2.set_title(f"Equity Curve (Current: ${df['capital'].iloc[-1]:,.2f})")
-            ax2.grid(True, alpha=0.3)
-            
-            # 3. MLOFI vs Threshold (Order Flow Imbalance)
-            if 'mlofi' in df.columns:
-                ax3.plot(df['step'], df['mlofi'], color='blue', linewidth=2, label='MLOFI')
-                if 'threshold' in df.columns:
-                    ax3.plot(df['step'], df['threshold'], color='red', linestyle='--', alpha=0.7, label='BUY Threshold')
-                    ax3.plot(df['step'], -df['threshold'], color='green', linestyle='--', alpha=0.7, label='SELL Threshold')
-                ax3.axhline(0, color='black', linestyle='-', alpha=0.3)
-                ax3.set_ylabel("MLOFI")
-                ax3.set_title("Multi-Level Order Flow Imbalance (Triggers when MLOFI crosses threshold)")
-                ax3.legend(loc='upper right', fontsize=8)
-                ax3.grid(True, alpha=0.3)
+                fig.add_trace(go.Scatter(x=[row['time']], y=[row['price']], mode='markers',
+                                         marker=dict(symbol=symbol, color=color, size=size),
+                                         showlegend=False, hoverinfo='text', text=row['msg']), row=1, col=1)
 
-            # 4. Hawkes Criticality + Volatility
-            ax4_twin = ax4.twinx()  # Create twin axis for volatility
+        # 2. Z-Score
+        fig.add_trace(go.Scatter(x=df['time'], y=df['z_score'], mode='lines', name='Z-Score', line=dict(color='magenta')), row=2, col=1)
+        fig.add_hline(y=3.0, line_dash="dash", line_color="green", row=2, col=1)
+        fig.add_hline(y=-3.0, line_dash="dash", line_color="red", row=2, col=1)
 
-            if 'criticality' in df.columns:
-                line1 = ax4.plot(df['step'], df['criticality'], color='purple', linewidth=2, label='Hawkes n')
-                ax4.axhline(0.6, color='red', linestyle='--', alpha=0.5, label='Critical Threshold')
-                ax4.set_ylabel("Hawkes Criticality (n)", color='purple')
-                ax4.set_ylim(0, 1.0)
-                ax4.tick_params(axis='y', labelcolor='purple')
+        # 3. Criticality
+        fig.add_trace(go.Scatter(x=df['time'], y=df['n'], mode='lines', name='Criticality', line=dict(color='orange')), row=3, col=1)
+        fig.add_hline(y=0.8, line_dash="dot", line_color="red", row=3, col=1)
 
-            if 'volatility' in df.columns:
-                line2 = ax4_twin.plot(df['step'], df['volatility'], color='orange', linewidth=2, label='Volatility σ')
-                ax4_twin.set_ylabel("Volatility (σ)", color='orange')
-                ax4_twin.tick_params(axis='y', labelcolor='orange')
-
-            # Combine legends
-            if 'criticality' in df.columns and 'volatility' in df.columns:
-                lines = line1 + line2
-                labels = [l.get_label() for l in lines]
-                ax4.legend(lines, labels, loc='upper right', fontsize=8)
-
-            ax4.set_title("Market Regime Indicators (Trade only when n > 0.6)")
-            ax4.grid(True, alpha=0.3)
-
-            # 5. Latency Breakdown (Stacked Area Chart)
-            if 'net_latency' in df.columns and 'latency' in df.columns:
-                # Create latency components
-                net_lat = df['net_latency'].fillna(0)
-                parse_lat = df.get('parse_latency', pd.Series([0]*len(df))).fillna(0)
-                phys_lat = df['latency'].fillna(0)  # C++ physics latency
-                read_lat = df.get('read_latency', pd.Series([0]*len(df))).fillna(0)
-                total_lat = df.get('total_latency', pd.Series([0]*len(df))).fillna(0)
-
-                # Stacked area plot
-                ax5.fill_between(df['step'], 0, net_lat, alpha=0.7, color='blue', label='Network')
-                ax5.fill_between(df['step'], net_lat, net_lat + parse_lat, alpha=0.7, color='green', label='Parse')
-                ax5.fill_between(df['step'], net_lat + parse_lat, net_lat + parse_lat + phys_lat,
-                                alpha=0.7, color='purple', label='Physics (C++)')
-                ax5.fill_between(df['step'], net_lat + parse_lat + phys_lat,
-                                net_lat + parse_lat + phys_lat + read_lat,
-                                alpha=0.7, color='orange', label='Signal Read')
-
-                # Total latency line
-                if total_lat.max() > 0:
-                    ax5.plot(df['step'], total_lat, color='red', linewidth=2, linestyle='--',
-                            label=f'Total ({total_lat.iloc[-1]:.2f}ms)', alpha=0.8)
-
-                # Target line
-                ax5.axhline(8.0, color='red', linestyle=':', alpha=0.5, label='8ms Target')
-
-                ax5.set_ylabel("Latency (ms)")
-                ax5.set_xlabel("Step")
-                ax5.set_title("End-to-End Latency Breakdown (Lower is Better)")
-                ax5.legend(loc='upper right', fontsize=8)
-                ax5.grid(True, alpha=0.3)
-                ax5.set_ylim(bottom=0)
-
-            plt.tight_layout()
-            plt.savefig("live_dashboard.png")
-            # plt.pause(0.1) # Don't need to show window if headless, saving png is enough for VS Code
-            
-            time.sleep(1)
-            
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            print(f"Dashboard Error: {e}")
-            time.sleep(1)
-
-if __name__ == "__main__":
-    run_dashboard()
+        fig.update_layout(height=800, template="plotly_dark", showlegend=False)
+        chart_placeholder.plotly_chart(fig, use_container_width=True)
+    
+    time.sleep(1)
