@@ -52,7 +52,12 @@ private:
   float last_fair_value = 0.0f;
   float last_energy = 0.0f;
   float last_hurst = 0.5f;
-  bool is_leader = true; // Default to true (BTC)
+  bool is_leader = true;
+
+  // USDT-USD Spread EMA (Z-Score Normalization)
+  float spread_ema = 0.0f;
+  bool spread_initialized = false;
+  static constexpr float SPREAD_EMA_ALPHA = 0.005f; // Slow EMA (~200 ticks)
 
 public:
   void update_price(float mid_price, double timestamp) {
@@ -261,7 +266,33 @@ public:
     float inventory_skew = inventory_btc * RISK_AVERSION * (vol_bps / 100.0f);
     float book_skew = imbalance * (spread_abs * 0.4f);
 
-    float fair_value = mid_price + book_skew - inventory_skew;
+    // USDT-USD Local Lead Alpha (Z-Score Normalized):
+    // We track the EMA of the raw spread to remove permanent bias.
+    // Only DEVIATIONS from the average spread are used as alpha.
+    float usdt_lead_skew = 0.0f;
+    if (futures_price > 0.0f && mid_price > 0.0f) {
+      float raw_spread = futures_price - mid_price;
+
+      // Update EMA
+      if (!spread_initialized) {
+        spread_ema = raw_spread;
+        spread_initialized = true;
+      } else {
+        spread_ema = SPREAD_EMA_ALPHA * raw_spread +
+                     (1.0f - SPREAD_EMA_ALPHA) * spread_ema;
+      }
+
+      // Alpha = deviation from average spread
+      float raw_signal = raw_spread - spread_ema;
+
+      // Clamp to 1.5x book spread (not fixed %) to prevent crossing
+      float max_skew = spread_abs * 1.5f;
+      raw_signal = std::max(-max_skew, std::min(max_skew, raw_signal));
+
+      usdt_lead_skew = raw_signal * 0.3f; // 30% weight
+    }
+
+    float fair_value = mid_price + book_skew - inventory_skew + usdt_lead_skew;
 
     if (std::abs(M) > 0.5f) {
       fair_value += M * ISING_ALPHA;

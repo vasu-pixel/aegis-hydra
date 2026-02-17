@@ -56,9 +56,8 @@ async def run_pipe(product_id="BTCUSD"):
     loop = asyncio.get_running_loop()
     
     # 1. Connect WS
-    from ..market.binance_ws import BinanceWebSocket, BinanceFuturesWS
+    from ..market.binance_ws import BinanceWebSocket
     ws = BinanceWebSocket(product_id)
-    fut_ws = BinanceFuturesWS(product_id.replace("-", "").lower()) # Global Futures
     
     print(f"Starting C++ Daemon: {DAEMON_PATH}")
     
@@ -127,9 +126,11 @@ async def run_pipe(product_id="BTCUSD"):
         def __init__(self):
             self.prices = []
             self.hurst = 0.5
+            self.last_price = 0.0  # BTC/USDT lead price
             self.last_update = 0.0
             
         def update(self, price):
+            self.last_price = price
             self.prices.append(price)
             if len(self.prices) > 100: self.prices.pop(0)
             
@@ -248,7 +249,7 @@ async def run_pipe(product_id="BTCUSD"):
             is_depth = '@depth' in message
             
             # Identify if this is a Lead Asset update
-            is_btc_lead = 'btcusdt@trade' in message and product_id != "BTCUSD"
+            is_btc_lead = 'btcusdt@trade' in message
 
             price = 0.0
             channel = "unknown"
@@ -283,8 +284,11 @@ async def run_pipe(product_id="BTCUSD"):
                     
                     if is_btc_lead:
                         lead_tracker.update(price)
-                        msg_queue.task_done()
-                        continue # Lead update doesn't trigger strategy tick
+                        if product_id == "BTCUSD":
+                            pass  # BTC engine uses its own book for strategy ticks
+                        else:
+                            msg_queue.task_done()
+                            continue  # Followers: lead update doesn't trigger strategy tick
                 # Skip fallback to JSON parsing - if regex fails, just skip this message
             elif is_depth:
                 # Must parse full message to update book
@@ -334,15 +338,20 @@ async def run_pipe(product_id="BTCUSD"):
                 #    print(f"DEBUG: Spot={price:.2f} Fut={fut_ws.price:.2f} Z={shared_state.get('z_score',0):.2f}")
 
                 # Pack: fffd (mid, fut, net_lat, recv_time) + I (trade_count) + 20f (5 levels x 4 arrays)
-                if fut_ws.price == 0.0 and random.random() < 0.001:
-                     print(f"⚠️  WARNING: Futures Price is 0.0! (Feed not ready?)")
+                # BTC/USDT Local Lead: Use lead_tracker.last_price (Binance.US spot)
+                # Staleness guard: if USDT price is >5s old, fall back to spot
+                usdt_age = time.time() - lead_tracker.last_update
+                if lead_tracker.last_price > 0 and usdt_age < 5.0:
+                    usdt_lead_price = lead_tracker.last_price
+                else:
+                    usdt_lead_price = price  # Fall back to spot (spread = 0, neutral)
                 
                 # Use '=' for standard alignment (no padding) to match C++ packed struct
-                # Pack: fffd (mid, fut, net_lat, recv_time) + I (trade_count) + f (lead_hurst) + 20f (5 levels x 4 arrays)
+                # Pack: fffd (mid, usdt_lead, net_lat, recv_time) + I (trade_count) + f (lead_hurst) + 20f (5 levels x 4 arrays)
                 effective_lead_hurst = lead_tracker.hurst if product_id != "BTCUSD" else 0.5
                 
                 packet = struct.pack('=fffdIf20f',
-                    price, fut_ws.price, net_latency, recv_time, trade_count_per_tick,
+                    price, usdt_lead_price, net_latency, recv_time, trade_count_per_tick,
                     effective_lead_hurst, *bid_prices, *bid_sizes, *ask_prices, *ask_sizes)
 
                 packet_queue.put_nowait(packet)
@@ -578,7 +587,7 @@ async def run_pipe(product_id="BTCUSD"):
 
                     signal_buffer.append(f"{time.time()},{decoded},{current_price:.2f},{pnl_pct:.4f}\n")
 
-    asyncio.create_task(fut_ws.connect()) # Start Futures Feed
+    # Futures feed removed — Binance.US spot only
     asyncio.create_task(read_signals(process.stdout))
     asyncio.create_task(background_maintenance())
     asyncio.create_task(pipe_writer())
@@ -586,11 +595,9 @@ async def run_pipe(product_id="BTCUSD"):
 
     # 6. Optimized Network Listener
     import websockets
-    # Build Binance stream URL: symbol@depth + symbol@trade
+    # Build Binance.US stream URL: symbol@depth + symbol@trade + btcusdt@trade (Local Lead)
     symbol = product_id.replace("-", "").lower()
-    streams = f"{symbol}@depth20@100ms/{symbol}@trade"
-    if product_id != "BTCUSD":
-        streams += "/btcusdt@trade" # Listen to Lead
+    streams = f"{symbol}@depth20@100ms/{symbol}@trade/btcusdt@trade"
     binance_url = f"{ws.WS_URL}?streams={streams}"
 
     async with websockets.connect(binance_url, max_size=None,
