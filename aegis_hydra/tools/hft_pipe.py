@@ -39,8 +39,8 @@ def log_csv_sync(filename, lines):
             f.writelines(lines)
     except: pass
 
-# Generate ONE shared run directory for all engines in this session
-_RUN_ID = datetime.now().strftime("%Y%m%d_%H%M%S")
+# Use shared run ID from launcher (env var), or generate one for standalone runs
+_RUN_ID = os.environ.get("AEGIS_RUN_ID", datetime.now().strftime("%Y%m%d_%H%M%S"))
 RUN_DIR = f"runs/{_RUN_ID}"
 os.makedirs(RUN_DIR, exist_ok=True)
 

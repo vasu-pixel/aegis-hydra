@@ -7,14 +7,21 @@ import time
 ASSETS = ["BTCUSD", "ETHUSD", "USDTUSD"]
 
 def main():
+    from datetime import datetime
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = f"runs/{run_id}"
+    os.makedirs(run_dir, exist_ok=True)
+    
     print("=== AEGIS HYDRA: TRI-FORCE PORTFOLIO LAUNCHER ===")
     print(f"Allocating $50 across: {', '.join(ASSETS)}")
+    print(f"📁 Run directory: {run_dir}/")
     
     processes = []
     
     # Ensure current directory is in sys.path for the subprocesses
     env = os.environ.copy()
     env["PYTHONPATH"] = os.path.dirname(os.path.abspath(__file__))
+    env["AEGIS_RUN_ID"] = run_id  # Shared across all engines
 
     try:
         for asset in ASSETS:
