@@ -31,7 +31,7 @@ private:
   static constexpr float MAX_INVENTORY = 0.002f;
 
   // Physics
-  static constexpr float ISING_ALPHA = 20.0f;
+  static constexpr float ISING_ALPHA = 2.0f; // ~2bps fair value shift
   static constexpr float COUPLING_J = 1.2f;
   static constexpr float CRITICAL_M = 0.6f;
 
@@ -181,7 +181,7 @@ public:
   }
 
   float solve_ising(float imbalance, float vol_bps) {
-    float h = imbalance * 5.0f;
+    float h = imbalance * 1.0f;      // Weak coupling to prevent saturation
     float T = vol_bps * 0.5f + 1.5f; // Base > J=1.2 ensures paramagnetic phase
 
     float m = M_prev;
