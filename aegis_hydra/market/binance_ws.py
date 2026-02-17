@@ -233,47 +233,5 @@ class BinanceWebSocket:
             return 0.0, [], []
 
 
-class BinanceFuturesWS:
-    """
-    The 'Leader' Feed.
-    Connects to Global Binance Futures (fstream.binance.com).
-    Read-Only. No API Keys needed.
-    """
-    WS_URL = "wss://fstream.binance.com/ws"
 
-    def __init__(self, symbol="btcusdt"):
-        # Map Spot (BTC-USD) to Futures (BTCUSDT)
-        sl = symbol.lower().replace("-", "")
-        if sl == 'btcusd': self.symbol = 'btcusdt'
-        elif sl == 'ethusd': self.symbol = 'ethusdt'
-        else: self.symbol = sl
-        
-        self.price = 0.0
-        self.latency = 0.0
-        self.ready = False
 
-    async def connect(self):
-        # Subscribe to Aggregated Trades (Fastest public feed)
-        stream = f"{self.symbol}@aggTrade"
-        url = f"{self.WS_URL}/{stream}"
-        
-        while True:
-            try:
-                async with websockets.connect(url) as ws:
-                    logger.info(f"Connected to Binance Futures ({self.symbol})")
-                    self.ready = True
-                    async for msg in ws:
-                        try:
-                            data = json.loads(msg)
-                            # 'p' is price, 'E' is event timestamp (faster than T)
-                            if 'p' in data:
-                                self.price = float(data['p'])
-                            if 'E' in data:
-                                # Track latency (Futures Server -> Us)
-                                self.latency = (time.time() - float(data['E'])/1000.0) * 1000.0
-                        except Exception as e:
-                            logger.error(f"Futures Msg Parse Error: {e}")
-            except Exception as e:
-                logger.error(f"Futures WS Error: {e}")
-                self.ready = False
-                await asyncio.sleep(5)
