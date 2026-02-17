@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
     auto start = std::chrono::high_resolution_clock::now();
 
     // Validate price (BTC should be between 1,000 and 200,000)
-    if (packet.mid_price < 1000.0f || packet.mid_price > 200000.0f) {
+    if (packet.mid_price < 0.5f || packet.mid_price > 200000.0f) {
       std::cerr << "\n⚠️  Bad price: " << packet.mid_price << " - skipping tick"
                 << std::endl;
       continue; // Skip this tick

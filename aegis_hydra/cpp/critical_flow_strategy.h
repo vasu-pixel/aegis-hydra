@@ -188,8 +188,6 @@ public:
     for (int i = 0; i < 3; ++i)
       m = std::tanh((COUPLING_J * m + h) / T);
 
-    if (std::abs(m - M_prev) < 0.1f)
-      return M_prev;
     M_prev = m;
     return m;
   }
@@ -305,7 +303,7 @@ public:
     float fair_value = mid_price + book_skew - inventory_skew + usdt_lead_skew;
 
     if (std::abs(M) > 0.5f) {
-      fair_value += M * ISING_ALPHA;
+      fair_value += M * ISING_ALPHA * (mid_price * 0.0001f);
     }
 
     last_fair_value = fair_value;
