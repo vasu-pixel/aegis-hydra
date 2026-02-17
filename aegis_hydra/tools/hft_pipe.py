@@ -40,6 +40,11 @@ def log_csv_sync(filename, lines):
     except: pass
 
 async def run_pipe(product_id="BTCUSD"):
+    # Generate unique run ID for this session
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = f"runs/{run_id}"
+    os.makedirs(run_dir, exist_ok=True)
+    print(f"📁 Run directory: {run_dir}/")
     # 0. Zero Jitter Tuning: Kill the Garbage Collector
     gc.collect() # Clean up once
     gc.freeze()  # Move all current objects to permanent generation 
@@ -173,19 +178,19 @@ async def run_pipe(product_id="BTCUSD"):
             if data_buffer:
                 lines = data_buffer[:]
                 data_buffer = []
-                loop.run_in_executor(io_executor, log_csv_sync, f"hft_market_data_{product_id}.csv", lines)
+                loop.run_in_executor(io_executor, log_csv_sync, f"{run_dir}/hft_market_data_{product_id}.csv", lines)
             if signal_buffer:
                 sigs = signal_buffer[:]
                 signal_buffer = []
-                loop.run_in_executor(io_executor, log_csv_sync, f"hft_signals_{product_id}.csv", sigs)
+                loop.run_in_executor(io_executor, log_csv_sync, f"{run_dir}/hft_signals_{product_id}.csv", sigs)
             if analysis_buffer:
                 lines = analysis_buffer[:]
                 analysis_buffer = []
-                loop.run_in_executor(io_executor, log_csv_sync, f"hft_analysis_{product_id}.csv", lines)
+                loop.run_in_executor(io_executor, log_csv_sync, f"{run_dir}/hft_analysis_{product_id}.csv", lines)
             if latency_buffer:
                 lat_lines = latency_buffer[:]
                 latency_buffer = []
-                loop.run_in_executor(io_executor, log_csv_sync, f"hft_latency_{product_id}.csv", lat_lines)
+                loop.run_in_executor(io_executor, log_csv_sync, f"{run_dir}/hft_latency_{product_id}.csv", lat_lines)
 
             # Print HFT stats every 20 cycles (10 seconds)
             if maintenance_counter % 20 == 0:
