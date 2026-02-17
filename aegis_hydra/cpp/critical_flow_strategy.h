@@ -220,14 +220,23 @@ public:
 
     // --- 3. DYNAMIC ACTIONS ---
 
-    // THE ETH PATCH: Lead-Lag Shield. If Lead (BTC) is trending, Followers
-    // (ETH) must stand down.
+    // 1. LEAD-LAG EJECT (Follower Protection)
+    // If we are ETH (Follower) and BTC (Leader) is trending hard, get flat.
     if (!is_leader && lead_hurst > 0.55f) {
+      if (inventory_btc > 0)
+        return Signal::SELL; // Panic Sell
+      if (inventory_btc < 0)
+        return Signal::BUY; // Panic Buy (Cover)
       return Signal::HOLD;
     }
 
-    // LEVEL 3: TUNNELING / CRASH --> STOP
+    // 2. CRASH EJECT (Physics Protection)
+    // If Energy is critical, get flat immediately.
     if (is_tunneling_crash) {
+      if (inventory_btc > 0)
+        return Signal::SELL;
+      if (inventory_btc < 0)
+        return Signal::BUY;
       return Signal::HOLD;
     }
 

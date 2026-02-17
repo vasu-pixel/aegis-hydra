@@ -100,7 +100,7 @@ async def run_pipe(product_id="BTCUSD"):
 
         # HFT MODE: ZERO RESTRICTIONS
         min_hold_seconds = 0.0  # NO MINIMUM HOLD - Trade at physics speed!
-        stop_loss_pct = -2.0    # Wide stop loss (only for disasters)
+        stop_loss_pct = -0.30   # 30bps stop loss (6 wins to recover)
 
         # Stats tracking
         total_trades = 0
@@ -226,6 +226,20 @@ async def run_pipe(product_id="BTCUSD"):
 
             # REMOVED: gc.collect(0) - causes 3-8ms spikes, defeats gc.disable()
             # gc.collect(0)
+
+            # --- STALE POSITION WATCHDOG ---
+            if tracker.position != 0 and tracker.entry_time > 0:
+                duration = time.time() - tracker.entry_time
+                curr_price = ws.latest_ticker_price
+                if curr_price > 0:
+                    pnl = (curr_price - tracker.entry_price) / tracker.entry_price * 100
+                    if tracker.position < 0: pnl = -pnl
+
+                    if duration > 45.0 and pnl < -0.05:
+                        print(f"  ⌛ STALE EXIT: Held {duration:.1f}s, PnL {pnl:.2f}% (Rotting Alpha)")
+                        tracker.position = 0.0
+                        tracker.losing_trades += 1
+            # ------------------------------------
 
     # 4b. Non-Blocking Pipe Writer
     async def pipe_writer():
