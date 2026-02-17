@@ -36,8 +36,9 @@ private:
   static constexpr float CRITICAL_M = 0.6f;
 
   // SPREAD FILTERS
-  static constexpr float MIN_SPREAD_BPS = 0.0001f;
-  static constexpr float MAX_SPREAD_BPS = 0.0050f;
+  static constexpr float MIN_SPREAD_BPS = 0.0005f; // 5bps (0.05% Min Profit)
+  static constexpr float MAX_SPREAD_BPS =
+      0.0080f; // 80bps (Allow wider captures)
 
   // THRESHOLDS
   static constexpr float ENERGY_CRASH_LIMIT = 0.80f; // Stop Trading
@@ -241,8 +242,8 @@ public:
     }
     // LEVEL 1: GROUND STATE --> VISCOUS HARVEST
     else if (is_ground_state) {
-      width_factor = is_leader ? 0.5f : 1.0f; // ETH uses 2x spread (10bps)
-      cooldown = 0.2;                         // Faster interaction
+      width_factor = 1.2f; // Keep spread wide — "Fishing Lines" further out
+      cooldown = 0.5;      // Slow down firing
     }
 
     if (current_time - last_action_time < cooldown)
@@ -301,8 +302,9 @@ public:
     last_fair_value = fair_value;
 
     // --- 6. TARGET QUOTES ---
-    float my_bid = fair_value - (spread_abs * width_factor);
-    float my_ask = fair_value + (spread_abs * width_factor);
+    float premium_buffer = mid_price * 0.0002f; // Fixed 2bp premium buffer
+    float my_bid = fair_value - (spread_abs * width_factor) - premium_buffer;
+    float my_ask = fair_value + (spread_abs * width_factor) + premium_buffer;
 
     // --- 7. EXECUTION LOGIC ---
 

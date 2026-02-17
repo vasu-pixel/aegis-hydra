@@ -518,7 +518,7 @@ async def run_pipe(product_id="BTCUSD"):
                 if parts[0] == "BUY":
                     # Use USDT Lead Price if available, else fallback to Spot
                     usdt_price = lead_tracker.last_price if lead_tracker.last_price > 0 else current_price
-                    limit_price = usdt_price * (1 - 0.0001)  # 1bp Vacuum Margin
+                    limit_price = usdt_price * (1 - 0.0006)  # 6bps Vacuum Margin
 
                     # 2. Calc Max Size (50% of Capital)
                     usd_available = tracker.capital * 0.50
@@ -536,7 +536,7 @@ async def run_pipe(product_id="BTCUSD"):
                 elif parts[0] == "SELL":
                     # Use USDT Lead Price
                     usdt_price = lead_tracker.last_price if lead_tracker.last_price > 0 else current_price
-                    limit_price = usdt_price * (1 + 0.0001)  # 1bp Vacuum Margin
+                    limit_price = usdt_price * (1 + 0.0006)  # 6bps Vacuum Margin
 
                     qty = (tracker.capital * 0.50) / current_price
                     
