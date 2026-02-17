@@ -17,13 +17,11 @@ def get_latest_run_dir():
     """Find the most recent run directory."""
     runs_dir = os.path.join(PROJECT_ROOT, "runs")
     if not os.path.exists(runs_dir):
-        return PROJECT_ROOT  # Fallback to root for legacy CSV files
+        return PROJECT_ROOT
     subdirs = sorted([d for d in os.listdir(runs_dir) if os.path.isdir(os.path.join(runs_dir, d))])
     if subdirs:
         return os.path.join(runs_dir, subdirs[-1])
     return PROJECT_ROOT
-
-RUN_DIR = get_latest_run_dir()
 
 st.markdown("""
 <style>
@@ -35,7 +33,7 @@ st.markdown("""
 # --- DATA LOADING ---
 @st.cache_data(ttl=2)
 def load_signals(symbol):
-    path = os.path.join(RUN_DIR, f"hft_signals_{symbol}.csv")
+    path = os.path.join(get_latest_run_dir(), f"hft_signals_{symbol}.csv")
     if not os.path.exists(path):
         return pd.DataFrame()
     try:
@@ -47,7 +45,7 @@ def load_signals(symbol):
 
 @st.cache_data(ttl=2)
 def load_latency(symbol):
-    path = os.path.join(RUN_DIR, f"hft_latency_{symbol}.csv")
+    path = os.path.join(get_latest_run_dir(), f"hft_latency_{symbol}.csv")
     if not os.path.exists(path):
         return pd.DataFrame()
     try:
@@ -59,7 +57,7 @@ def load_latency(symbol):
 
 @st.cache_data(ttl=2)
 def load_trades():
-    path = os.path.join(RUN_DIR, "paper_trades.csv")
+    path = os.path.join(get_latest_run_dir(), "paper_trades.csv")
     if not os.path.exists(path):
         return pd.DataFrame()
     try:

@@ -39,11 +39,13 @@ def log_csv_sync(filename, lines):
             f.writelines(lines)
     except: pass
 
+# Generate ONE shared run directory for all engines in this session
+_RUN_ID = datetime.now().strftime("%Y%m%d_%H%M%S")
+RUN_DIR = f"runs/{_RUN_ID}"
+os.makedirs(RUN_DIR, exist_ok=True)
+
 async def run_pipe(product_id="BTCUSD"):
-    # Generate unique run ID for this session
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = f"runs/{run_id}"
-    os.makedirs(run_dir, exist_ok=True)
+    run_dir = RUN_DIR
     print(f"📁 Run directory: {run_dir}/")
     # 0. Zero Jitter Tuning: Kill the Garbage Collector
     gc.collect() # Clean up once
