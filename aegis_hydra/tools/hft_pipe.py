@@ -293,11 +293,10 @@ async def run_pipe(product_id="BTCUSD"):
                     
                     if is_btc_lead:
                         lead_tracker.update(price)
-                        if product_id == "BTCUSD":
-                            pass  # BTC engine uses its own book for strategy ticks
-                        else:
-                            msg_queue.task_done()
-                            continue  # Followers: lead update doesn't trigger strategy tick
+                        # CRITICAL FIX: Always skip processing for Lead Asset updates.
+                        # We only want to tick the strategy/PnL when OUR asset trades.
+                        msg_queue.task_done()
+                        continue
                 # Skip fallback to JSON parsing - if regex fails, just skip this message
             elif is_depth:
                 # Must parse full message to update book
@@ -517,36 +516,28 @@ async def run_pipe(product_id="BTCUSD"):
 
                 # Entry signals: VACUUM EXECUTION (Dynamic Size & Limit)
                 if parts[0] == "BUY":
-                    # Futures > Spot. We want to BUY Spot up to (Futures - Margin).
-                    # 1. Calc Vacuum Limit Price
-                    # Default: Use Spot Price if Futures unavailable? No, Z-score implies Futures exist.
-                    fut_price = lead_tracker.last_price if lead_tracker.last_price > 0 else current_price
-                    limit_price = fut_price * (1 - 0.0003) # 0.03% Vacuum Margin below Lead
+                    # Use USDT Lead Price if available, else fallback to Spot
+                    usdt_price = lead_tracker.last_price if lead_tracker.last_price > 0 else current_price
+                    limit_price = usdt_price * (1 - 0.0001)  # 1bp Vacuum Margin
 
                     # 2. Calc Max Size (50% of Capital)
                     usd_available = tracker.capital * 0.50
-                    if limit_price <= 0: return # Prevent ZeroDivisionError
+                    if limit_price <= 0: return
                     qty = usd_available / limit_price
                     
-                    # 3. Execution (Simulated IOC)
-                    # In real life: await sniper.snipe_stale_order('buy', qty, limit_price)
-                    # In Paper: We fill at current_price because it is < limit_price (Arb exists)
-                    
-                    tracker.position = qty / (tracker.capital / current_price) # Normalized to 1.0ish
-                    tracker.entry_price = current_price # We still fill at Best Ask (Start of sweep)
+                    tracker.position = qty / (tracker.capital / current_price)
+                    tracker.entry_price = current_price
                     tracker.entry_time = time.time()
-                    tracker.vacuum_limit = limit_price # Store for logging
+                    tracker.vacuum_limit = limit_price
                     
-                    print(f"  🌪️ VACUUM LONG: Sweeping {qty:.4f} BTC up to ${limit_price:.2f} (Fut: {fut_price:.2f})")
+                    print(f"  🌪️ VACUUM LONG: Sweeping {qty:.4f} BTC up to ${limit_price:.2f} (Lead: {usdt_price:.2f})")
                     print(f"     Filled @ Best Ask: ${current_price:.2f}")
 
                 elif parts[0] == "SELL":
-                    # Futures < Spot. We want to SELL Spot down to (Futures + Margin).
-                    fut_price = lead_tracker.last_price if lead_tracker.last_price > 0 else current_price
-                    limit_price = fut_price * (1 + 0.0003) # 0.03% Vacuum Margin above Lead
+                    # Use USDT Lead Price
+                    usdt_price = lead_tracker.last_price if lead_tracker.last_price > 0 else current_price
+                    limit_price = usdt_price * (1 + 0.0001)  # 1bp Vacuum Margin
 
-                    # 2. Calc Max Size (100% of Position or 50% Short Capability)
-                    # Paper Trade: Assume we short 1.0 unit equivalent
                     qty = (tracker.capital * 0.50) / current_price
                     
                     tracker.position = - (qty / (tracker.capital / current_price))
@@ -554,7 +545,7 @@ async def run_pipe(product_id="BTCUSD"):
                     tracker.entry_time = time.time()
                     tracker.vacuum_limit = limit_price
 
-                    print(f"  🌪️ VACUUM SHORT: Dumping {qty:.4f} BTC down to ${limit_price:.2f} (Fut: {fut_price:.2f})")
+                    print(f"  🌪️ VACUUM SHORT: Dumping {qty:.4f} BTC down to ${limit_price:.2f} (Lead: {usdt_price:.2f})")
                     print(f"     Filled @ Best Bid: ${current_price:.2f}")
 
                 # Exit signals: CLOSE_LONG or CLOSE_SHORT - IMMEDIATE EXECUTION
