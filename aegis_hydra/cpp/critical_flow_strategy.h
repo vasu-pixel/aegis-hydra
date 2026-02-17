@@ -36,7 +36,7 @@ private:
   static constexpr float CRITICAL_M = 0.6f;
 
   // SPREAD FILTERS
-  static constexpr float MIN_SPREAD_BPS = 0.0005f; // 5bps (0.05% Min Profit)
+  static constexpr float MIN_SPREAD_BPS = 0.0001f; // 1bp (tight BTC markets)
   static constexpr float MAX_SPREAD_BPS =
       0.0080f; // 80bps (Allow wider captures)
 
@@ -182,7 +182,7 @@ public:
 
   float solve_ising(float imbalance, float vol_bps) {
     float h = imbalance * 5.0f;
-    float T = vol_bps * 0.5f + 0.1f;
+    float T = vol_bps * 0.5f + 1.5f; // Base > J=1.2 ensures paramagnetic phase
 
     float m = M_prev;
     for (int i = 0; i < 3; ++i)
@@ -256,14 +256,10 @@ public:
     if (current_time - last_action_time < cooldown)
       return Signal::HOLD;
 
-    // --- 4. SPREAD PHYSICS ---
+    // --- 4. SPREAD & PRICING (always compute M/Fair for metrics) ---
     float spread_abs = book.ask_prices[0] - book.bid_prices[0];
     float spread_bps = spread_abs / mid_price;
 
-    if (spread_bps < MIN_SPREAD_BPS || spread_bps > MAX_SPREAD_BPS)
-      return Signal::HOLD;
-
-    // --- 5. PRICING ---
     float bid_qty = book.bid_sizes[0] + book.bid_sizes[1];
     float ask_qty = book.ask_sizes[0] + book.ask_sizes[1];
     float imbalance = (bid_qty - ask_qty) / (bid_qty + ask_qty + 1e-5f);
@@ -275,13 +271,10 @@ public:
     float book_skew = imbalance * (spread_abs * 0.4f);
 
     // USDT-USD Local Lead Alpha (Z-Score Normalized):
-    // We track the EMA of the raw spread to remove permanent bias.
-    // Only DEVIATIONS from the average spread are used as alpha.
     float usdt_lead_skew = 0.0f;
     if (futures_price > 0.0f && mid_price > 0.0f) {
       float raw_spread = futures_price - mid_price;
 
-      // Update EMA
       if (!spread_initialized) {
         spread_ema = raw_spread;
         spread_initialized = true;
@@ -290,14 +283,10 @@ public:
                      (1.0f - SPREAD_EMA_ALPHA) * spread_ema;
       }
 
-      // Alpha = deviation from average spread
       float raw_signal = raw_spread - spread_ema;
-
-      // Clamp to 1.5x book spread (not fixed %) to prevent crossing
       float max_skew = spread_abs * 1.5f;
       raw_signal = std::max(-max_skew, std::min(max_skew, raw_signal));
-
-      usdt_lead_skew = raw_signal * 0.3f; // 30% weight
+      usdt_lead_skew = raw_signal * 0.3f;
     }
 
     float fair_value = mid_price + book_skew - inventory_skew + usdt_lead_skew;
@@ -307,6 +296,10 @@ public:
     }
 
     last_fair_value = fair_value;
+
+    // Spread filter: gate execution only (M/Fair already computed above)
+    if (spread_bps < MIN_SPREAD_BPS || spread_bps > MAX_SPREAD_BPS)
+      return Signal::HOLD;
 
     // --- 6. TARGET QUOTES ---
     float premium_buffer = mid_price * 0.0002f; // Fixed 2bp premium buffer
