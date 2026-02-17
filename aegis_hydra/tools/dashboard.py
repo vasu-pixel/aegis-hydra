@@ -105,10 +105,10 @@ for symbol, df in data.items():
     last_pnl = pnl_series.iloc[-1]
     total_pnl += last_pnl
     
-    # Win/Loss: count transitions where PnL increased vs decreased
-    pnl_diff = pnl_series.diff().dropna()
-    wins = (pnl_diff > 0).sum()
-    losses = (pnl_diff < 0).sum()
+    # Win/Loss: count actual completed trades (CLOSE signals with PnL)
+    closes = df[df['signal'].str.contains('CLOSE', na=False)]
+    wins = (closes['pnl'] > 0).sum() if not closes.empty else 0
+    losses = (closes['pnl'] < 0).sum() if not closes.empty else 0
     total_wins += wins
     total_losses += losses
     total_buys += len(buys)
@@ -120,10 +120,10 @@ for symbol, df in data.items():
     max_dd = drawdown.min()
     
     # Sharpe Ratio (annualized from tick returns)
-    returns = pnl_diff
+    pnl_diff = pnl_series.diff().dropna()
     sharpe = 0.0
-    if len(returns) > 1 and returns.std() > 0:
-        sharpe = (returns.mean() / returns.std()) * math.sqrt(252 * 24 * 60)
+    if len(pnl_diff) > 1 and pnl_diff.std() > 0:
+        sharpe = (pnl_diff.mean() / pnl_diff.std()) * math.sqrt(252 * 24 * 60)
     
     asset_stats[symbol] = {
         'price': df['price'].iloc[-1],
