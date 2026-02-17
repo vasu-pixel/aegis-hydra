@@ -205,7 +205,7 @@ async def run_pipe(product_id="BTCUSD"):
                 import statistics
                 print(f"\n📊 Latency Stats (last 500ms):")
                 print(f"   Network:  {statistics.mean(latency_stats['network']):.2f}ms avg (Spot)")
-                print(f"   FutLat:   {fut_ws.latency:.2f}ms lag (Futures)")
+                print(f"   LeadLat:  {ws.last_net_latency:.2f}ms (USDT Lead)")
                 print(f"   Parse:    {statistics.mean(latency_stats['parse']):.2f}ms avg")
                 print(f"   Physics:  {statistics.mean(latency_stats['physics']):.2f}ms avg")
                 print(f"   SigRead:  {statistics.mean(latency_stats['signal_read']):.2f}ms avg")
@@ -335,7 +335,7 @@ async def run_pipe(product_id="BTCUSD"):
 
                 # DEBUG: Verify flows
                 # if random.random() < 0.01:
-                #    print(f"DEBUG: Spot={price:.2f} Fut={fut_ws.price:.2f} Z={shared_state.get('z_score',0):.2f}")
+                #    print(f"DEBUG: Spot={price:.2f} Lead={lead_tracker.last_price:.2f}")
 
                 # Pack: fffd (mid, fut, net_lat, recv_time) + I (trade_count) + 20f (5 levels x 4 arrays)
                 # BTC/USDT Local Lead: Use lead_tracker.last_price (Binance.US spot)
@@ -511,8 +511,8 @@ async def run_pipe(product_id="BTCUSD"):
                     # Futures > Spot. We want to BUY Spot up to (Futures - Margin).
                     # 1. Calc Vacuum Limit Price
                     # Default: Use Spot Price if Futures unavailable? No, Z-score implies Futures exist.
-                    fut_price = fut_ws.price if fut_ws.ready else current_price * 1.001
-                    limit_price = fut_price * (1 - 0.0003) # 0.03% Vacuum Margin below Futures
+                    fut_price = lead_tracker.last_price if lead_tracker.last_price > 0 else current_price
+                    limit_price = fut_price * (1 - 0.0003) # 0.03% Vacuum Margin below Lead
 
                     # 2. Calc Max Size (50% of Capital)
                     usd_available = tracker.capital * 0.50
@@ -533,8 +533,8 @@ async def run_pipe(product_id="BTCUSD"):
 
                 elif parts[0] == "SELL":
                     # Futures < Spot. We want to SELL Spot down to (Futures + Margin).
-                    fut_price = fut_ws.price if fut_ws.ready else current_price * 0.999
-                    limit_price = fut_price * (1 + 0.0003) # 0.03% Vacuum Margin above Futures
+                    fut_price = lead_tracker.last_price if lead_tracker.last_price > 0 else current_price
+                    limit_price = fut_price * (1 + 0.0003) # 0.03% Vacuum Margin above Lead
 
                     # 2. Calc Max Size (100% of Position or 50% Short Capability)
                     # Paper Trade: Assume we short 1.0 unit equivalent
