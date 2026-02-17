@@ -1,0 +1,50 @@
+Loading backtest_ETHUSD.csv...
+Loaded 60480 rows.
+Running Strategy A (Viscous) (Capital: $20.0)...
+
+--- Strategy A (Viscous) REPORT ---
+Net PnL:       $-20.18
+Trades:        5
+Win Rate:      0.0%
+Profit Factor: 0.00
+
+--- Return Distribution by Timeframe ---
+[1-Minute] (N=10079)
+  Mean PnL:   $-0.0020
+  Std Dev:    $0.3327
+  Skewness:   0.01
+  Win %:      49.6%
+[15-Minute] (N=671)
+  Mean PnL:   $-0.0323
+  Std Dev:    $1.2639
+  Skewness:   0.14
+  Win %:      49.3%
+[1-Hour] (N=167)
+  Mean PnL:   $-0.1310
+  Std Dev:    $2.6642
+  Skewness:   0.18
+  Win %:      42.5%
+Running Strategy D (Quantum Viscosity) (Capital: $20.0)...
+
+--- Strategy D (Quantum Viscosity) REPORT ---
+Net PnL:       $-19.76
+Trades:        1
+Win Rate:      0.0%
+Profit Factor: 0.00
+
+--- Return Distribution by Timeframe ---
+[1-Minute] (N=10079)
+  Mean PnL:   $-0.0019
+  Std Dev:    $0.3281
+  Skewness:   0.01
+  Win %:      49.6%
+[15-Minute] (N=671)
+  Mean PnL:   $-0.0317
+  Std Dev:    $1.2462
+  Skewness:   0.14
+  Win %:      49.3%
+[1-Hour] (N=167)
+  Mean PnL:   $-0.1283
+  Std Dev:    $2.6272
+  Skewness:   0.18
+  Win %:      42.5%

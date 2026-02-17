@@ -1,0 +1,56 @@
+Loading backtest_ETHUSD.csv...
+Loaded 60480 rows.
+Loading backtest_BTCUSD.csv...
+Loaded 60480 rows.
+Running Strategy A (Viscous) (Capital: $20.0, Lead-Lag: ON)...
+Pre-calculating Lead Hurst signals (BTC)...
+Lead Hurst: Avg=0.47, Max=0.83
+
+--- Strategy A (Viscous) REPORT ---
+Net PnL:       $-2.06
+Trades:        5
+Win Rate:      0.0%
+Profit Factor: 0.00
+
+--- Return Distribution by Timeframe ---
+[1-Minute] (N=10079)
+  Mean PnL:   $-0.0002
+  Std Dev:    $0.0322
+  Skewness:   -0.02
+  Win %:      49.9%
+[15-Minute] (N=671)
+  Mean PnL:   $-0.0030
+  Std Dev:    $0.1221
+  Skewness:   -0.10
+  Win %:      50.7%
+[1-Hour] (N=167)
+  Mean PnL:   $-0.0078
+  Std Dev:    $0.2357
+  Skewness:   -0.16
+  Win %:      53.9%
+Running Strategy D (Quantum Viscosity) (Capital: $20.0, Lead-Lag: ON)...
+Pre-calculating Lead Hurst signals (BTC)...
+Lead Hurst: Avg=0.47, Max=0.83
+
+--- Strategy D (Quantum Viscosity) REPORT ---
+Net PnL:       $-2.06
+Trades:        5
+Win Rate:      0.0%
+Profit Factor: 0.00
+
+--- Return Distribution by Timeframe ---
+[1-Minute] (N=10079)
+  Mean PnL:   $-0.0002
+  Std Dev:    $0.0322
+  Skewness:   -0.02
+  Win %:      49.9%
+[15-Minute] (N=671)
+  Mean PnL:   $-0.0030
+  Std Dev:    $0.1221
+  Skewness:   -0.10
+  Win %:      50.7%
+[1-Hour] (N=167)
+  Mean PnL:   $-0.0078
+  Std Dev:    $0.2357
+  Skewness:   -0.16
+  Win %:      53.9%

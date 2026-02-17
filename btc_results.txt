@@ -1,0 +1,50 @@
+Loading backtest_BTCUSD.csv...
+Loaded 60480 rows.
+Running Strategy A (Viscous) (Capital: $20.0, Lead-Lag: OFF)...
+
+--- Strategy A (Viscous) REPORT ---
+Net PnL:       $21.02
+Trades:        792
+Win Rate:      27.3%
+Profit Factor: 0.30
+
+--- Return Distribution by Timeframe ---
+[1-Minute] (N=10079)
+  Mean PnL:   $0.0020
+  Std Dev:    $0.6166
+  Skewness:   0.02
+  Win %:      49.5%
+[15-Minute] (N=671)
+  Mean PnL:   $0.0309
+  Std Dev:    $2.4918
+  Skewness:   -0.02
+  Win %:      51.0%
+[1-Hour] (N=167)
+  Mean PnL:   $0.1243
+  Std Dev:    $5.1857
+  Skewness:   -0.06
+  Win %:      49.1%
+Running Strategy D (Quantum Viscosity) (Capital: $20.0, Lead-Lag: OFF)...
+
+--- Strategy D (Quantum Viscosity) REPORT ---
+Net PnL:       $23.32
+Trades:        554
+Win Rate:      39.4%
+Profit Factor: 0.84
+
+--- Return Distribution by Timeframe ---
+[1-Minute] (N=10079)
+  Mean PnL:   $0.0022
+  Std Dev:    $0.6092
+  Skewness:   0.02
+  Win %:      49.7%
+[15-Minute] (N=671)
+  Mean PnL:   $0.0343
+  Std Dev:    $2.4575
+  Skewness:   -0.02
+  Win %:      51.6%
+[1-Hour] (N=167)
+  Mean PnL:   $0.1381
+  Std Dev:    $5.1102
+  Skewness:   -0.07
+  Win %:      49.7%

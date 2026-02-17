@@ -12,6 +12,7 @@ struct __attribute__((packed)) InputPacket {
   float net_latency;
   double recv_time;
   uint32_t trade_count; // Number of trades since last tick
+  float lead_hurst;     // NEW: Lead asset (BTC) trend signal
 
   // Order book levels (5 levels of bid/ask)
   float bid_prices[5];
@@ -20,11 +21,20 @@ struct __attribute__((packed)) InputPacket {
   float ask_sizes[5];
 };
 
-int main() {
+int main(int argc, char *argv[]) {
   std::cerr << "=== CRITICAL FLOW SNIPER DAEMON ===" << std::endl;
   std::cerr << "=== Strategy: OFI + Hawkes Criticality ===" << std::endl;
 
+  bool is_leader = true;
+  if (argc > 1 && std::string(argv[1]) == "--follower") {
+    is_leader = false;
+    std::cerr << "=== ROLE: FOLLOWER (Beta Guard Active) ===" << std::endl;
+  } else {
+    std::cerr << "=== ROLE: LEADER (Alpha Engine) ===" << std::endl;
+  }
+
   CriticalFlowStrategy strategy;
+  strategy.set_leader(is_leader);
   OrderBook book;
 
   InputPacket packet;
@@ -66,8 +76,8 @@ int main() {
     strategy.update_price(packet.mid_price, packet.recv_time);
 
     // Generate signal
-    auto signal =
-        strategy.generate_signal(book, packet.recv_time, packet.futures_price);
+    auto signal = strategy.generate_signal(
+        book, packet.recv_time, packet.futures_price, packet.lead_hurst);
 
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<float, std::milli> latency = end - start;

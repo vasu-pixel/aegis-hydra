@@ -13,6 +13,14 @@ from datetime import datetime
 # Absolute Path to Daemon
 DAEMON_PATH = os.path.join(os.path.dirname(__file__), '../cpp/critical_flow_daemon')
 
+# --- PORTFOLIO CONFIGURATION ---
+# Allocation for $50 total
+ALLOCATIONS = {
+    "BTCUSD": 20.0,
+    "ETHUSD": 20.0,
+    "USDTUSD": 10.0
+}
+
 # Optimization: Global Thread Pools
 # parse_executor: for JSON parsing
 # io_executor: for disk writes (CSV/JSON)
@@ -54,9 +62,15 @@ async def run_pipe(product_id="BTCUSD"):
     
     print(f"Starting C++ Daemon: {DAEMON_PATH}")
     
-    # 2. Launch Daemon
+    args = [DAEMON_PATH]
+    if product_id != "BTCUSD":
+        args.append("--follower")
+        print(f"Role: FOLLOWER (Monitoring BTC for Beta Guard)")
+    else:
+        print(f"Role: LEADER (Alpha Engine)")
+
     process = subprocess.Popen(
-        [DAEMON_PATH], 
+        args, 
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=sys.stderr,
@@ -66,12 +80,15 @@ async def run_pipe(product_id="BTCUSD"):
     
     # 3. State Tracker
     class Tracker:
-        capital = 100.0
-        position = 0.0
-        prev_price = 0.0
-        entry_price = 0.0      # Track entry price for P&L calculation
-        entry_time = 0.0       # Track entry time for stats
-        fee_rate = 0.000       # Fees Set to 0.0% (VIP / Paper Mode)
+        def __init__(self, symbol, initial_cap):
+            self.symbol = symbol
+            self.capital = initial_cap
+            self.initial_capital = initial_cap
+            self.position = 0.0
+            self.prev_price = 0.0
+            self.entry_price = 0.0
+            self.entry_time = 0.0
+            self.fee_rate = 0.000
 
         # HFT MODE: ZERO RESTRICTIONS
         min_hold_seconds = 0.0  # NO MINIMUM HOLD - Trade at physics speed!
@@ -82,7 +99,8 @@ async def run_pipe(product_id="BTCUSD"):
         winning_trades = 0
         losing_trades = 0
 
-    tracker = Tracker()
+    initial_cap = ALLOCATIONS.get(product_id, 20.0) 
+    tracker = Tracker(product_id, initial_cap)
     state_history = []
     data_buffer = [] 
     signal_buffer = []
@@ -98,10 +116,35 @@ async def run_pipe(product_id="BTCUSD"):
 
     # Latency tracking
     latency_buffer = []
+
     latency_stats = {
         'network': [], 'parse': [], 'physics': [],
         'signal_read': [], 'total': []
     }
+
+    # 4. Lead Asset Tracking (BTC)
+    class LeadTracker:
+        def __init__(self):
+            self.prices = []
+            self.hurst = 0.5
+            self.last_update = 0.0
+            
+        def update(self, price):
+            self.prices.append(price)
+            if len(self.prices) > 100: self.prices.pop(0)
+            
+            # Simple Hurst Proxy (Variance Ratio)
+            if len(self.prices) >= 20 and time.time() - self.last_update > 1.0:
+                ret1 = [math.log(self.prices[i]/self.prices[i-1]) for i in range(1, len(self.prices))]
+                ret5 = [math.log(self.prices[i]/self.prices[i-5]) for i in range(5, len(self.prices))]
+                v1 = statistics.variance(ret1) if len(ret1) > 1 else 0
+                v5 = statistics.variance(ret5) if len(ret5) > 1 else 0
+                if v1 > 1e-12:
+                    vr = v5 / (5.0 * v1)
+                    self.hurst = 0.5 + 0.5 * math.log(max(1e-5, vr))
+                    self.last_update = time.time()
+
+    lead_tracker = LeadTracker()
 
     # 4. Background Tasks
     maintenance_counter = 0
@@ -129,24 +172,24 @@ async def run_pipe(product_id="BTCUSD"):
             if data_buffer:
                 lines = data_buffer[:]
                 data_buffer = []
-                loop.run_in_executor(io_executor, log_csv_sync, "hft_market_data.csv", lines)
+                loop.run_in_executor(io_executor, log_csv_sync, f"hft_market_data_{product_id}.csv", lines)
             if signal_buffer:
                 sigs = signal_buffer[:]
                 signal_buffer = []
-                loop.run_in_executor(io_executor, log_csv_sync, "hft_signals.csv", sigs)
+                loop.run_in_executor(io_executor, log_csv_sync, f"hft_signals_{product_id}.csv", sigs)
             if analysis_buffer:
                 lines = analysis_buffer[:]
                 analysis_buffer = []
-                loop.run_in_executor(io_executor, log_csv_sync, "hft_analysis.csv", lines)
+                loop.run_in_executor(io_executor, log_csv_sync, f"hft_analysis_{product_id}.csv", lines)
             if latency_buffer:
                 lat_lines = latency_buffer[:]
                 latency_buffer = []
-                loop.run_in_executor(io_executor, log_csv_sync, "hft_latency_breakdown.csv", lat_lines)
+                loop.run_in_executor(io_executor, log_csv_sync, f"hft_latency_{product_id}.csv", lat_lines)
 
             # Print HFT stats every 20 cycles (10 seconds)
             if maintenance_counter % 20 == 0:
-                pnl = tracker.capital - 100.0
-                pnl_pct = (pnl / 100.0) * 100
+                pnl = tracker.capital - tracker.initial_capital
+                pnl_pct = (pnl / tracker.initial_capital) * 100 if tracker.initial_capital > 0 else 0
                 pos_str = "LONG 📈" if tracker.position > 0 else ("SHORT 📉" if tracker.position < 0 else "FLAT")
 
                 # Calculate win rate
@@ -203,6 +246,9 @@ async def run_pipe(product_id="BTCUSD"):
             # Binance uses "stream":"symbol@trade" and "stream":"symbol@depth"
             is_trade = '@trade' in message
             is_depth = '@depth' in message
+            
+            # Identify if this is a Lead Asset update
+            is_btc_lead = 'btcusdt@trade' in message and product_id != "BTCUSD"
 
             price = 0.0
             channel = "unknown"
@@ -234,6 +280,11 @@ async def run_pipe(product_id="BTCUSD"):
                             net_latency = (time.time() - server_ts) * 1000
                         except:
                             pass
+                    
+                    if is_btc_lead:
+                        lead_tracker.update(price)
+                        msg_queue.task_done()
+                        continue # Lead update doesn't trigger strategy tick
                 # Skip fallback to JSON parsing - if regex fails, just skip this message
             elif is_depth:
                 # Must parse full message to update book
@@ -287,9 +338,12 @@ async def run_pipe(product_id="BTCUSD"):
                      print(f"⚠️  WARNING: Futures Price is 0.0! (Feed not ready?)")
                 
                 # Use '=' for standard alignment (no padding) to match C++ packed struct
-                packet = struct.pack('=fffdI20f',
+                # Pack: fffd (mid, fut, net_lat, recv_time) + I (trade_count) + f (lead_hurst) + 20f (5 levels x 4 arrays)
+                effective_lead_hurst = lead_tracker.hurst if product_id != "BTCUSD" else 0.5
+                
+                packet = struct.pack('=fffdIf20f',
                     price, fut_ws.price, net_latency, recv_time, trade_count_per_tick,
-                    *bid_prices, *bid_sizes, *ask_prices, *ask_sizes)
+                    effective_lead_hurst, *bid_prices, *bid_sizes, *ask_prices, *ask_sizes)
 
                 packet_queue.put_nowait(packet)
 
@@ -535,6 +589,8 @@ async def run_pipe(product_id="BTCUSD"):
     # Build Binance stream URL: symbol@depth + symbol@trade
     symbol = product_id.replace("-", "").lower()
     streams = f"{symbol}@depth20@100ms/{symbol}@trade"
+    if product_id != "BTCUSD":
+        streams += "/btcusdt@trade" # Listen to Lead
     binance_url = f"{ws.WS_URL}?streams={streams}"
 
     async with websockets.connect(binance_url, max_size=None,
@@ -585,7 +641,11 @@ async def run_pipe(product_id="BTCUSD"):
 
 if __name__ == "__main__":
     sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
+    
+    # Get product from CLI
+    product = sys.argv[1] if len(sys.argv) > 1 else "BTCUSD"
+    
     try:
-        asyncio.run(run_pipe())
+        asyncio.run(run_pipe(product))
     except KeyboardInterrupt:
         pass

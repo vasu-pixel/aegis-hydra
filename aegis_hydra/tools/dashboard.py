@@ -1,107 +1,117 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 import time
+from datetime import datetime
 
-# Config
-st.set_page_config(layout="wide", page_title="Aegis Hydra: HFT Monitor")
-ANALYSIS_FILE = "hft_analysis.csv"
-SIGNALS_FILE = "hft_signals.csv"
-WINDOW_SIZE = 200
+# --- CONFIGURATION ---
+st.set_page_config(page_title="AEGIS HYDRA CONTROL CENTER", layout="wide", initial_sidebar_state="collapsed")
 
-st.title("⚡ Aegis Hydra: HFT Lead-Lag Monitor")
+# Custom Dark Theme CSS
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; color: #ffffff; }
+    .stMetric { background-color: #1a1c24; padding: 15px; border-radius: 10px; border-left: 5px solid #00ff00; }
+    .metric-row { display: flex; justify-content: space-between; margin-bottom: 20px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# Auto-refresh logic
-if 'last_update' not in st.session_state:
-    st.session_state.last_update = time.time()
-
-def load_data():
-    if not os.path.exists(ANALYSIS_FILE):
-        return pd.DataFrame(), pd.DataFrame()
-    
-    # Read Analysis Data (last N lines to separate read)
-    # Using python engine for stability with bad lines
+# --- UTILITIES ---
+@st.cache_data(ttl=1)
+def load_signal_data(symbol):
+    filename = f"hft_signals_{symbol}.csv"
+    if not os.path.exists(filename):
+        return pd.DataFrame()
     try:
-        # Read tail using system command for speed on large files? 
-        # For now, just pandas read_csv
-        df = pd.read_csv(ANALYSIS_FILE, names=['time', 'price', 'z_score', 'n', 'mlofi'])
-        if len(df) > WINDOW_SIZE:
-             df = df.iloc[-WINDOW_SIZE:]
+        # Read last 500 rows for performance
+        df = pd.read_csv(filename)
+        if df.empty: return df
+        df['timestamp'] = pd.to_datetime(df['recv_time'], unit='s')
+        return df.tail(500)
     except:
-        df = pd.DataFrame()
+        return pd.DataFrame()
 
-    try:
-        if os.path.exists(SIGNALS_FILE):
-            sigs = pd.read_csv(SIGNALS_FILE, names=['time', 'msg', 'price', 'pnl'])
-        else:
-            sigs = pd.DataFrame()
-    except:
-        sigs = pd.DataFrame()
-        
-    return df, sigs
+def get_portfolio_data():
+    symbols = ["BTCUSD", "ETHUSD", "USDTUSD"]
+    data = {}
+    for s in symbols:
+        df = load_signal_data(s)
+        if not df.empty:
+            data[s] = df
+    return data
 
-# Placeholder for charts
-chart_placeholder = st.empty()
-metrics_placeholder = st.empty()
+# --- HEADER ---
+st.title("🛡️ AEGIS HYDRA | TRI-FORCE CONTROL CENTER")
+st.markdown("---")
 
-while True:
-    df, sigs = load_data()
+# --- LIVE METRICS ---
+portfolio = get_portfolio_data()
+
+if not portfolio:
+    st.warning("Waiting for HFT logs... (Run launcher.py to start engines)")
+    time.sleep(2)
+    st.rerun()
+
+cols = st.columns(len(portfolio))
+total_pnl = 0.0
+
+for i, (symbol, df) in enumerate(portfolio.items()):
+    last_row = df.iloc[-1]
+    pnl = last_row.get('pnl', 0.0)
+    total_pnl += pnl
     
-    if not df.empty:
-        # Metrics
-        last_row = df.iloc[-1]
-        with metrics_placeholder.container():
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Spot Price", f"${last_row['price']:.2f}")
-            c2.metric("Z-Score (Lead-Lag)", f"{last_row['z_score']:.2f}", 
-                     delta_color="off" if abs(last_row['z_score']) < 3 else "inverse")
-            c3.metric("Criticality (n)", f"{last_row['n']:.2f}",
-                     delta_color="inverse" if last_row['n'] > 0.8 else "normal")
-            c4.metric("MLOFI", f"{last_row['mlofi']:.4f}")
+    with cols[i]:
+        st.metric(label=f"{symbol} PRICE", 
+                  value=f"${last_row['mid']:.2f}", 
+                  delta=f"{last_row.get('mag', 0.0):.4f} Mag")
+        st.caption(f"Latency: {last_row['net_lat']:.2f}ms | Energy: {last_row.get('energy', 0.0):.4f}")
 
-        # Charts
-        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
-                            vertical_spacing=0.05,
-                            subplot_titles=("Spot Price & Signals", "Z-Score (Futures - Spot)", "Hawkes Criticality"))
+# --- MAIN GRAPH: 3-ASSET NORMALIZED PRICE ---
+st.subheader("📊 Multi-Asset Alpha Shield (Normalized Price %)")
 
-        # 1. Price
-        fig.add_trace(go.Scatter(x=df['time'], y=df['price'], mode='lines', name='Price', line=dict(color='cyan')), row=1, col=1)
-        
-        # Signals Overlay
-        if not sigs.empty:
-            recent_sigs = sigs[sigs['time'] >= df['time'].min()]
-            for _, row in recent_sigs.iterrows():
-                symbol = "circle"
-                color = "yellow"
-                size = 8
-                if "BUY" in row['msg']: 
-                    symbol = "triangle-up"
-                    color = "green"
-                    size = 12
-                elif "SELL" in row['msg']:
-                    symbol = "triangle-down"
-                    color = "red"
-                    size = 12
-                
-                fig.add_trace(go.Scatter(x=[row['time']], y=[row['price']], mode='markers',
-                                         marker=dict(symbol=symbol, color=color, size=size),
-                                         showlegend=False, hoverinfo='text', text=row['msg']), row=1, col=1)
+fig = go.Figure()
 
-        # 2. Z-Score
-        fig.add_trace(go.Scatter(x=df['time'], y=df['z_score'], mode='lines', name='Z-Score', line=dict(color='magenta')), row=2, col=1)
-        fig.add_hline(y=3.0, line_dash="dash", line_color="green", row=2, col=1)
-        fig.add_hline(y=-3.0, line_dash="dash", line_color="red", row=2, col=1)
-
-        # 3. Criticality
-        fig.add_trace(go.Scatter(x=df['time'], y=df['n'], mode='lines', name='Criticality', line=dict(color='orange')), row=3, col=1)
-        fig.add_hline(y=0.8, line_dash="dot", line_color="red", row=3, col=1)
-
-        fig.update_layout(height=800, template="plotly_dark", showlegend=False)
-        # Use dynamic key to prevent StreamlitDuplicateElementKey error in while loop
-        chart_key = f"live_hft_chart_{int(time.time()*100)}"
-        chart_placeholder.plotly_chart(fig, use_container_width=True, key=chart_key)
+for symbol, df in portfolio.items():
+    # Normalize price to % change from start of buffer
+    first_price = df['mid'].iloc[0]
+    norm_price = (df['mid'] / first_price - 1) * 100
     
-    time.sleep(1)
+    fig.add_trace(go.Scatter(x=df['timestamp'], y=norm_price, name=symbol, mode='lines'))
+
+fig.update_layout(
+    template="plotly_dark",
+    height=500,
+    margin=dict(l=20, r=20, t=20, b=20),
+    xaxis_title="Time",
+    yaxis_title="Price Change (%)",
+    hovermode="x unified"
+)
+st.plotly_chart(fig, use_container_width=True)
+
+# --- PHYSICS & TRADES ---
+c1, c2 = st.columns([2, 1])
+
+with c1:
+    st.subheader("🌀 Ising Physics: Magnetization vs Energy")
+    # Show BTC Magnetization (The Leader signal)
+    if "BTCUSD" in portfolio:
+        btc_df = portfolio["BTCUSD"]
+        fig_phys = make_subplots(specs=[[{"secondary_y": True}]])
+        fig_phys.add_trace(go.Scatter(x=btc_df['timestamp'], y=btc_df['mag'], name="Magnetization", line=dict(color='#00ff00')), secondary_y=False)
+        fig_phys.add_trace(go.Scatter(x=btc_df['timestamp'], y=btc_df['energy'], name="Energy", line=dict(color='#ff00ff', dash='dot')), secondary_y=True)
+        fig_phys.update_layout(template="plotly_dark", height=300, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(fig_phys, use_container_width=True)
+
+with c2:
+    st.subheader("📜 Recent Trades")
+    if os.path.exists("paper_trades.csv"):
+        trades_df = pd.read_csv("paper_trades.csv").tail(10)
+        st.dataframe(trades_df, use_container_width=True)
+    else:
+        st.info("No trades logged yet.")
+
+# --- AUTO REFRESH ---
+time.sleep(2)
+st.rerun()

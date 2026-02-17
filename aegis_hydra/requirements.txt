@@ -36,9 +36,3 @@ pyyaml>=6.0.1
 
 # --- DATABASE (optional) ---
 # psycopg2-binary>=2.9.9  # Uncomment for TimescaleDB support
-
-# --- VISUALIZATION ---
-streamlit>=1.30.0
-plotly>=5.18.0
-pandas>=2.1.0
-matplotlib>=3.8.0
