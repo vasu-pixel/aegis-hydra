@@ -271,8 +271,9 @@ async def run_pipe(product_id="BTCUSD"):
             is_trade = '@trade' in message
             is_depth = '@depth' in message
             
-            # Identify if this is a Lead Asset update
-            is_btc_lead = 'btcusdt@trade' in message
+            # Identify if this is a Lead Asset update (matches engine's own USDT pair)
+            lead_stream_name = f"{product_id.replace('USD','').lower()}usdt@trade"
+            is_lead_update = lead_stream_name in message
 
             price = 0.0
             channel = "unknown"
@@ -305,7 +306,7 @@ async def run_pipe(product_id="BTCUSD"):
                         except:
                             pass
                     
-                    if is_btc_lead:
+                    if is_lead_update:
                         lead_tracker.update(price)
                         # CRITICAL FIX: Always skip processing for Lead Asset updates.
                         # We only want to tick the strategy/PnL when OUR asset trades.
@@ -530,8 +531,11 @@ async def run_pipe(product_id="BTCUSD"):
 
                 # Entry signals: VACUUM EXECUTION (Dynamic Size & Limit)
                 if parts[0] == "BUY":
-                    # Use USDT Lead Price if available, else fallback to Spot
-                    usdt_price = lead_tracker.last_price if lead_tracker.last_price > 0 else current_price
+                    # Only BTC engine uses USDT lead; ETH/USDT use their own price
+                    if product_id == "BTCUSD" and lead_tracker.last_price > 0:
+                        usdt_price = lead_tracker.last_price
+                    else:
+                        usdt_price = current_price
                     limit_price = usdt_price * (1 - 0.0006)  # 6bps Vacuum Margin
 
                     # 2. Calc Max Size (50% of Capital)
@@ -544,12 +548,15 @@ async def run_pipe(product_id="BTCUSD"):
                     tracker.entry_time = time.time()
                     tracker.vacuum_limit = limit_price
                     
-                    print(f"  🌪️ VACUUM LONG: Sweeping {qty:.4f} BTC up to ${limit_price:.2f} (Lead: {usdt_price:.2f})")
+                    print(f"  🌪️ VACUUM LONG [{product_id}]: Sweeping {qty:.4f} up to ${limit_price:.2f} (Lead: {usdt_price:.2f})")
                     print(f"     Filled @ Best Ask: ${current_price:.2f}")
 
                 elif parts[0] == "SELL":
-                    # Use USDT Lead Price
-                    usdt_price = lead_tracker.last_price if lead_tracker.last_price > 0 else current_price
+                    # Only BTC engine uses USDT lead; ETH/USDT use their own price
+                    if product_id == "BTCUSD" and lead_tracker.last_price > 0:
+                        usdt_price = lead_tracker.last_price
+                    else:
+                        usdt_price = current_price
                     limit_price = usdt_price * (1 + 0.0006)  # 6bps Vacuum Margin
 
                     qty = (tracker.capital * 0.50) / current_price
@@ -559,7 +566,7 @@ async def run_pipe(product_id="BTCUSD"):
                     tracker.entry_time = time.time()
                     tracker.vacuum_limit = limit_price
 
-                    print(f"  🌪️ VACUUM SHORT: Dumping {qty:.4f} BTC down to ${limit_price:.2f} (Lead: {usdt_price:.2f})")
+                    print(f"  🌪️ VACUUM SHORT [{product_id}]: Dumping {qty:.4f} down to ${limit_price:.2f} (Lead: {usdt_price:.2f})")
                     print(f"     Filled @ Best Bid: ${current_price:.2f}")
 
                 # Exit signals: CLOSE_LONG or CLOSE_SHORT - IMMEDIATE EXECUTION
@@ -609,9 +616,16 @@ async def run_pipe(product_id="BTCUSD"):
 
     # 6. Optimized Network Listener
     import websockets
-    # Build Binance.US stream URL: symbol@depth + symbol@trade + btcusdt@trade (Local Lead)
+    # Build Binance.US stream URL: symbol@depth + symbol@trade + <asset>usdt@trade (USDT Lead)
     symbol = product_id.replace("-", "").lower()
-    streams = f"{symbol}@depth20@100ms/{symbol}@trade/btcusdt@trade"
+    # Each engine subscribes to its OWN asset's USDT pair for lead pricing
+    LEAD_MAP = {"BTCUSD": "btcusdt", "ETHUSD": "ethusdt"}  # USDTUSD has no USDT lead
+    lead_symbol = LEAD_MAP.get(product_id)
+    if lead_symbol and lead_symbol != symbol:
+        streams = f"{symbol}@depth20@100ms/{symbol}@trade/{lead_symbol}@trade"
+    else:
+        # No lead needed (e.g. stablecoin) or lead == self
+        streams = f"{symbol}@depth20@100ms/{symbol}@trade"
     binance_url = f"{ws.WS_URL}?streams={streams}"
 
     async with websockets.connect(binance_url, max_size=None,

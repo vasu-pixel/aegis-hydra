@@ -31,12 +31,12 @@ private:
   static constexpr float MAX_INVENTORY = 0.002f;
 
   // Physics
-  static constexpr float ISING_ALPHA = 2.0f; // ~2bps fair value shift
+  static constexpr float ISING_ALPHA = 0.5f; // ~0.5bps fair shift max
   static constexpr float COUPLING_J = 1.2f;
   static constexpr float CRITICAL_M = 0.6f;
 
   // SPREAD FILTERS
-  static constexpr float MIN_SPREAD_BPS = 0.0001f; // 1bp (tight BTC markets)
+  static constexpr float MIN_SPREAD_BPS = 0.0f; // No minimum for paper trading
   static constexpr float MAX_SPREAD_BPS =
       0.0080f; // 80bps (Allow wider captures)
 
@@ -184,7 +184,7 @@ public:
     float h = imbalance * 1.0f;      // Weak coupling to prevent saturation
     float T = vol_bps * 0.5f + 1.5f; // Base > J=1.2 ensures paramagnetic phase
 
-    float m = M_prev;
+    float m = 0.0f; // Fresh each tick - no hysteresis from M_prev
     for (int i = 0; i < 3; ++i)
       m = std::tanh((COUPLING_J * m + h) / T);
 
